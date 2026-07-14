@@ -1,0 +1,38 @@
+# 构建产物
+build/
+*.o
+*.obj
+*.exe
+*.dll
+*.lib
+*.a
+
+# qmake生成文件
+Makefile
+Makefile.Release
+Makefile.Debug
+Makefile.*
+.qmake.stash
+*.qmake.stash
+object_script.*
+
+# 临时文件
+*.tmp
+*.bak
+*.~*
+*~
+
+# IDE文件
+.vscode/
+.idea/
+*.user
+*.suo
+*.sln
+*.vcxproj*
+
+# 系统文件
+Thumbs.db
+.DS_Store
+
+# 调试符号
+*.pdb
