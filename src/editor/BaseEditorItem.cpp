@@ -82,6 +82,23 @@ void BaseEditorItem::syncToData()
 }
 
 // ============================================================
+// updateRectTemporary - 拉伸过程中临时更新元素rect
+//
+// 在mouseMoveEvent的Resize分支中调用，实现文字流式重排。
+// clone元素数据并setRect，更新Item位置和包围矩形，触发重绘。
+// 不入撤销栈，最终尺寸在mouseReleaseEvent中通过ResizeCommand入栈。
+// ============================================================
+void BaseEditorItem::updateRectTemporary(const QRectF& newRect)
+{
+    prepareGeometryChange();
+    PageElementData* cloned = m_element.constData()->clone();
+    cloned->setRect(newRect);
+    m_element = PageElementPtr(cloned);
+    setPos(newRect.topLeft());
+    update();
+}
+
+// ============================================================
 // boundingRect - Item本地坐标系下的包围矩形
 //
 // 元素内容从(0,0)到(width,height)，四周留SELECTION_MARGIN边距

@@ -191,4 +191,27 @@ private:
     int m_newZ;
 };
 
+// ============================================================
+// NudgeCommand - 方向键微移命令
+//
+// 记录多个元素通过方向键微移的旧位置和新位置，支持批量撤销/重做。
+// 位置变更不影响包围矩形，无需重建Item。
+// ============================================================
+class NudgeCommand : public QUndoCommand
+{
+public:
+    NudgeCommand(EditorScene* scene,
+                 const QMap<QString, QPointF>& oldPositions,
+                 const QMap<QString, QPointF>& newPositions,
+                 QUndoCommand* parent = nullptr);
+
+    void undo() override;
+    void redo() override;
+
+private:
+    EditorScene* m_scene;
+    QMap<QString, QPointF> m_oldPositions;  // elementId -> 旧位置
+    QMap<QString, QPointF> m_newPositions;  // elementId -> 新位置
+};
+
 #endif // COMMANDS_H

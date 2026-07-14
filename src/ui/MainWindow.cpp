@@ -408,16 +408,11 @@ void MainWindow::changePaperSize(const PaperSize& paper)
 {
     PageSizeManager::instance().setPaper(paper);
 
-    // 更新编辑场景矩形与背景
-    qreal w = PageSizeManager::instance().pageWidth();
-    qreal h = PageSizeManager::instance().pageHeight();
-
     if (m_editorView && m_editorView->editorScene()) {
         EditorScene* scene = m_editorView->editorScene();
-        scene->setSceneRect(0, 0, w, h);
+        // 更新页面背景Item（白纸+边距虚线）和场景矩形
+        scene->updatePageBackground();
         scene->update();
-        // 刷新视图背景缓存，确保切换纸张后白色纸张正确显示
-        m_editorView->resetCachedContent();
         // 适配窗口以完整显示新尺寸页面
         m_editorView->fitToWindow();
     }
@@ -496,6 +491,8 @@ void MainWindow::connectSignals()
             this, &MainWindow::onElementLockChanged);
     connect(m_layerPanel, &LayerPanel::elementZOrderChanged,
             this, &MainWindow::onElementZOrderChanged);
+    connect(m_layerPanel, &LayerPanel::elementZOrderBatchChanged,
+            this, &MainWindow::onElementZOrderBatchChanged);
     connect(m_layerPanel, &LayerPanel::elementDeleted,
             this, &MainWindow::onElementDeleted);
     connect(m_layerPanel, &LayerPanel::elementDuplicated,
@@ -503,10 +500,30 @@ void MainWindow::connectSignals()
 
     // 层级快速调整信号
     connect(m_layerPanel, &LayerPanel::bringToFront, this, [this](const QString& elementId) {
-        onElementZOrderChanged(elementId, 9999);
+        if (!m_editorView || !m_editorView->editorScene()) return;
+        // 查找当前所有BaseEditorItem中的最大z值（排除页面背景z<=-10000）
+        int maxZ = -10001;
+        const auto items = m_editorView->editorScene()->items();
+        for (auto* it : items) {
+            if (auto* e = dynamic_cast<BaseEditorItem*>(it)) {
+                int z = static_cast<int>(e->zValue());
+                if (z > -10000 && z > maxZ) maxZ = z;
+            }
+        }
+        onElementZOrderChanged(elementId, maxZ + 1);
     });
     connect(m_layerPanel, &LayerPanel::sendToBack, this, [this](const QString& elementId) {
-        onElementZOrderChanged(elementId, 0);
+        if (!m_editorView || !m_editorView->editorScene()) return;
+        // 查找当前所有BaseEditorItem中的最小z值（排除页面背景z<=-10000）
+        int minZ = 10000;
+        const auto items = m_editorView->editorScene()->items();
+        for (auto* it : items) {
+            if (auto* e = dynamic_cast<BaseEditorItem*>(it)) {
+                int z = static_cast<int>(e->zValue());
+                if (z > -10000 && z < minZ) minZ = z;
+            }
+        }
+        onElementZOrderChanged(elementId, minZ - 1);
     });
     connect(m_layerPanel, &LayerPanel::moveUp, this, [this](const QString& elementId) {
         BaseEditorItem* item = findItemById(elementId);
@@ -705,6 +722,7 @@ void MainWindow::recalculateLayout()
 
         m_editorView->setLayoutEngine(m_layoutEngine);
         m_editorView->setCurrentPage(0);
+        m_editorView->fitToWindow();
         m_currentPage = 0;
     }
 
@@ -1871,11 +1889,24 @@ void MainWindow::onElementVisibilityChanged(const QString& elementId, bool visib
 {
     if (!m_editorView || !m_editorView->editorScene()) return;
 
+    // 拦截背景白纸图层
+    if (elementId == QStringLiteral("__background__")) {
+        if (auto* bg = m_editorView->editorScene()->pageBackgroundItem())
+            bg->setVisible(visible);
+        return;
+    }
+
     BaseEditorItem* item = findItemById(elementId);
     if (item) {
+        // 隐藏选中元素时清除选中，避免装饰器残留
+        if (!visible && item->isSelected()) {
+            item->setSelected(false);
+        }
         item->setVisible(visible);
         item->syncToData();
-        refreshLayerPanel();
+        item->update();
+        // 持久化到m_editedPages，翻页后状态保持
+        onPageModified();
     }
 }
 
@@ -1897,7 +1928,7 @@ void MainWindow::onElementLockChanged(const QString& elementId, bool locked)
         // 锁定的元素不可选中、不可移动
         newItem->setFlag(QGraphicsItem::ItemIsSelectable, !locked);
         newItem->setFlag(QGraphicsItem::ItemIsMovable, !locked);
-        refreshLayerPanel();
+        onPageModified();
     }
 }
 
@@ -1916,6 +1947,25 @@ void MainWindow::onElementZOrderChanged(const QString& elementId, int newZ)
     // ZOrderCommand::redo()会执行setZValue+syncToData
     EditorScene* scene = m_editorView->editorScene();
     scene->undoStack()->push(new ZOrderCommand(scene, elementId, oldZ, newZ));
+    onPageModified();
+}
+
+void MainWindow::onElementZOrderBatchChanged(const QList<QPair<QString, int>>& changes)
+{
+    if (!m_editorView || !m_editorView->editorScene()) return;
+    if (changes.isEmpty()) return;
+
+    EditorScene* scene = m_editorView->editorScene();
+    scene->undoStack()->beginMacro(QStringLiteral("调整图层顺序"));
+    for (const auto& c : changes) {
+        BaseEditorItem* item = findItemById(c.first);
+        if (!item) continue;
+        int oldZ = static_cast<int>(item->zValue());
+        if (oldZ == c.second) continue;
+        scene->undoStack()->push(new ZOrderCommand(scene, c.first, oldZ, c.second));
+    }
+    scene->undoStack()->endMacro();
+    onPageModified();
 }
 
 void MainWindow::onElementDeleted(const QString& elementId)
@@ -2086,6 +2136,10 @@ void MainWindow::refreshLayerPanel()
     PageDataPtr data = m_editorView->editorScene()->exportPageData();
     if (data) {
         m_layerPanel->updateLayers(data->elements());
+        // 注入背景白纸图层（固定最底层）
+        if (auto* bg = m_editorView->editorScene()->pageBackgroundItem()) {
+            m_layerPanel->setBackgroundItem(tr("白纸背景"), bg->isVisible());
+        }
     } else {
         m_layerPanel->clearLayers();
     }

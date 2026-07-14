@@ -21,6 +21,7 @@ class SelectionDecorator;
 class QTextCursor;
 class QGraphicsTextItem;
 class GuideLineItem;
+class QGraphicsRectItem;
 
 // ============================================================
 // EditorScene - 编辑场景
@@ -77,6 +78,12 @@ public:
     // 吸附开关
     bool snapEnabled() const;
     void setSnapEnabled(bool enabled);
+
+    // 更新页面背景Item（白纸+边距虚线），在loadPage和changePaperSize后调用
+    void updatePageBackground();
+
+    // 获取页面背景Item（白纸），供图层面板控制可见性
+    QGraphicsRectItem* pageBackgroundItem() const { return m_pageBackgroundItem; }
 
     // 选中状态：返回当前选中的编辑器Item列表
     QList<BaseEditorItem*> selectedEditorItems() const;
@@ -146,6 +153,9 @@ private:
     int m_currentPage;
     QUndoStack* m_undoStack;
 
+    // 页面背景Item（白色纸张+边距虚线），zValue=-10000位于最底层
+    QGraphicsRectItem* m_pageBackgroundItem;
+
     // 选中装饰器
     SelectionDecorator* m_selectionDecorator;
 
@@ -168,6 +178,9 @@ private:
 
     // 文本编辑模式跟踪
     QGraphicsTextItem* m_editingTextItem;  // 当前正在编辑的QGraphicsTextItem（监听选区变化）
+
+    // 剪贴板：存储复制/剪切的元素数据
+    QList<PageElementPtr> m_clipboard;
 };
 
 #endif // EDITORSCENE_H

@@ -39,6 +39,10 @@ public:
     // Item -> 数据：将Item当前状态写回元素数据（通过clone创建新副本）
     virtual void syncToData();
 
+    // 临时更新元素rect（拉伸过程中实时调用，不入撤销栈）
+    // clone元素数据并setRect，触发prepareGeometryChange和重绘
+    void updateRectTemporary(const QRectF& newRect);
+
     // QGraphicsItem接口
     QRectF boundingRect() const override;
     void paint(QPainter* painter, const QStyleOptionGraphicsItem* option,

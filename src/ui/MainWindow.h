@@ -87,6 +87,7 @@ private slots:
     void onElementVisibilityChanged(const QString& elementId, bool visible);
     void onElementLockChanged(const QString& elementId, bool locked);
     void onElementZOrderChanged(const QString& elementId, int newZ);
+    void onElementZOrderBatchChanged(const QList<QPair<QString, int>>& changes);
     void onElementDeleted(const QString& elementId);
     void onElementDuplicated(const QString& elementId);
     void onApplyToAllPages();   // 应用到所有同类页

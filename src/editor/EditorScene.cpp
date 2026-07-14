@@ -8,6 +8,10 @@
 #include "GuideLineItem.h"
 #include "layout/LayoutConstants.h"
 
+#include <QGraphicsRectItem>
+#include <QPainter>
+#include <QPen>
+
 #include <QGraphicsSceneMouseEvent>
 #include <QKeyEvent>
 #include <QPainter>
@@ -54,6 +58,7 @@ EditorScene::EditorScene(QObject* parent)
     : QGraphicsScene(parent)
     , m_currentPage(-1)
     , m_undoStack(new QUndoStack(this))
+    , m_pageBackgroundItem(nullptr)
     , m_selectionDecorator(nullptr)
     , m_dragMode(None)
     , m_resizeHandle(TopLeft)
@@ -120,6 +125,9 @@ void EditorScene::loadPage(int pageIndex)
     clearPage();
     m_currentPage = pageIndex;
 
+    // 创建页面背景Item（白纸+边距虚线），必须在clearPage之后、创建元素Item之前
+    updatePageBackground();
+
     if (m_currentPageData) {
         // 从已有PageData恢复元素
         createItemsFromPageData(m_currentPageData);
@@ -140,7 +148,8 @@ void EditorScene::loadPage(int pageIndex)
         createItemsFromPageData(m_currentPageData);
     }
 
-    // 刷新背景绘制
+    // 强制全场景重绘 + 失效背景层，确保白色纸张正确显示
+    update(sceneRect());
     invalidate(sceneRect(), BackgroundLayer);
 }
 
@@ -243,32 +252,56 @@ QList<BaseEditorItem*> EditorScene::selectedEditorItems() const
 // ============================================================
 void EditorScene::drawBackground(QPainter* painter, const QRectF& rect)
 {
+    Q_UNUSED(painter);
     Q_UNUSED(rect);
+    // 白色页面背景和边距虚线现由 m_pageBackgroundItem (QGraphicsRectItem) 渲染。
+    // 不再使用drawBackground绘制，避免QGraphicsView缓存/更新模式导致背景不显示的问题。
+    // view的backgroundBrush(灰色)负责页面外围区域。
+}
 
-    painter->save();
-
-    // 动态获取页面尺寸（点，72DPI）
+// ============================================================
+// updatePageBackground - 创建/更新页面背景Item
+//
+// 使用QGraphicsRectItem作为白纸背景，替代drawBackground方案。
+// Item位于zValue=-10000（最底层），不可选中/不可移动。
+// 边距虚线作为子Item附加。
+// 在loadPage()和changePaperSize()后调用。
+// ============================================================
+void EditorScene::updatePageBackground()
+{
     qreal pageW = PageSizeManager::instance().pageWidth();
     qreal pageH = PageSizeManager::instance().pageHeight();
 
-    // 白色页面背景
-    QRectF pageRect(0, 0, pageW, pageH);
-    painter->setBrush(QBrush(COLOR_WHITE));
-    painter->setPen(Qt::NoPen);
-    painter->drawRect(pageRect);
+    // 创建背景Item（首次或clearPage后被删除时）
+    if (!m_pageBackgroundItem) {
+        m_pageBackgroundItem = new QGraphicsRectItem();
+        m_pageBackgroundItem->setZValue(-10000);  // 最底层，所有元素Item之下
+        m_pageBackgroundItem->setFlag(QGraphicsItem::ItemIsSelectable, false);
+        m_pageBackgroundItem->setFlag(QGraphicsItem::ItemIsMovable, false);
+        addItem(m_pageBackgroundItem);
+    }
 
-    // 页面边距虚线（灰色虚线矩形）
+    // 白色页面背景 + 浅灰边框
+    m_pageBackgroundItem->setRect(0, 0, pageW, pageH);
+    m_pageBackgroundItem->setBrush(QBrush(COLOR_WHITE));
+    m_pageBackgroundItem->setPen(QPen(QColor(180, 180, 180), 1));
+
+    // 更新边距虚线（先删除旧子Item再创建新的）
+    for (auto* child : m_pageBackgroundItem->childItems()) {
+        delete child;
+    }
     qreal ml = PageSizeManager::instance().leftMargin();
     qreal mt = PageSizeManager::instance().topMargin();
     qreal mr = PageSizeManager::instance().rightMargin();
     qreal mb = PageSizeManager::instance().bottomMargin();
     QRectF marginRect(ml, mt, pageW - ml - mr, pageH - mt - mb);
-    QPen marginPen(QColor(200, 200, 200), 1, Qt::DashLine);
-    painter->setPen(marginPen);
-    painter->setBrush(Qt::NoBrush);
-    painter->drawRect(marginRect);
+    auto* marginItem = new QGraphicsRectItem(marginRect, m_pageBackgroundItem);
+    marginItem->setPen(QPen(QColor(200, 200, 200), 1, Qt::DashLine));
+    marginItem->setBrush(Qt::NoBrush);
+    marginItem->setFlag(QGraphicsItem::ItemIsSelectable, false);
 
-    painter->restore();
+    // 更新场景矩形
+    setSceneRect(0, 0, pageW, pageH);
 }
 
 // ============================================================
@@ -486,6 +519,20 @@ void EditorScene::mouseMoveEvent(QGraphicsSceneMouseEvent* event)
             // 更新装饰器（pos=0,0时rect即scene坐标）
             m_selectionDecorator->setPos(0, 0);
             m_selectionDecorator->setRect(newUnion);
+
+            // 单元素拉伸时实时更新元素rect，实现文字流式重排
+            if (selected.size() == 1) {
+                BaseEditorItem* item = selected.first();
+                QRectF initRect = m_initialRects.value(item);
+                // 按联合矩形缩放比例计算元素新rect
+                qreal scaleX = (initialUnion.width() > 0)
+                               ? newUnion.width() / initialUnion.width() : 1.0;
+                qreal scaleY = (initialUnion.height() > 0)
+                               ? newUnion.height() / initialUnion.height() : 1.0;
+                QRectF newRect(newUnion.left(), newUnion.top(),
+                               initRect.width() * scaleX, initRect.height() * scaleY);
+                item->updateRectTemporary(newRect);
+            }
         }
         break;
     }
@@ -885,11 +932,69 @@ void EditorScene::keyPressEvent(QKeyEvent* event)
             return;
         }
         break;
+    case Qt::Key_C:
+        // Ctrl+C: 复制选中元素到剪贴板
+        if (event->modifiers() & Qt::ControlModifier) {
+            if (!selected.isEmpty()) {
+                m_clipboard.clear();
+                for (BaseEditorItem* item : selected) {
+                    // 深拷贝元素数据，避免与场景中元素共享可变状态
+                    PageElementData* cloned = item->elementData().constData()->clone();
+                    m_clipboard.append(PageElementPtr(cloned));
+                }
+            }
+            event->accept();
+            return;
+        }
+        break;
+    case Qt::Key_V:
+        // Ctrl+V: 粘贴剪贴板元素到偏移位置
+        if (event->modifiers() & Qt::ControlModifier) {
+            if (!m_clipboard.isEmpty()) {
+                m_undoStack->beginMacro(QStringLiteral("粘贴 %1 个元素").arg(m_clipboard.size()));
+                for (const PageElementPtr& elem : m_clipboard) {
+                    // 每次粘贴都深拷贝，生成新ID，偏移(20,20)
+                    PageElementData* cloned = elem.constData()->clone();
+                    QRectF r = cloned->rect();
+                    cloned->setRect(QRectF(r.x() + 20.0, r.y() + 20.0, r.width(), r.height()));
+                    cloned->setId(QUuid::createUuid().toString());
+                    PageElementPtr newElem(cloned);
+                    m_undoStack->push(new AddCommand(this, newElem));
+                }
+                m_undoStack->endMacro();
+                emit pageModified();
+            }
+            event->accept();
+            return;
+        }
+        break;
+    case Qt::Key_X:
+        // Ctrl+X: 剪切选中元素（复制到剪贴板后删除）
+        if (event->modifiers() & Qt::ControlModifier) {
+            if (!selected.isEmpty()) {
+                // 先复制到剪贴板
+                m_clipboard.clear();
+                for (BaseEditorItem* item : selected) {
+                    PageElementData* cloned = item->elementData().constData()->clone();
+                    m_clipboard.append(PageElementPtr(cloned));
+                }
+                // 再通过DeleteCommand删除
+                QList<PageElementPtr> elements;
+                for (BaseEditorItem* item : selected) {
+                    elements.append(item->elementData());
+                }
+                m_undoStack->push(new DeleteCommand(this, elements));
+                emit pageModified();
+            }
+            event->accept();
+            return;
+        }
+        break;
     case Qt::Key_Left:
     case Qt::Key_Right:
     case Qt::Key_Up:
     case Qt::Key_Down: {
-        // 方向键微移
+        // 方向键微移（通过NudgeCommand入撤销栈，支持Ctrl+Z撤销）
         if (!selected.isEmpty()) {
             qreal step = (event->modifiers() & Qt::ShiftModifier) ? 10.0 : 1.0;
             qreal dx = 0, dy = 0;
@@ -900,10 +1005,16 @@ void EditorScene::keyPressEvent(QKeyEvent* event)
             case Qt::Key_Down:  dy =  step; break;
             default: break;
             }
+            // 记录旧位置和新位置，通过NudgeCommand实现撤销/重做
+            QMap<QString, QPointF> oldPositions, newPositions;
             for (BaseEditorItem* item : selected) {
-                item->moveBy(dx, dy);
+                QString id = item->elementData().constData()->id();
+                QPointF oldPos = item->pos();
+                oldPositions[id] = oldPos;
+                newPositions[id] = QPointF(oldPos.x() + dx, oldPos.y() + dy);
             }
-            // TODO Task 8: 创建NudgeCommand并push到m_undoStack
+            // push NudgeCommand：redo()会执行setPos到新位置
+            m_undoStack->push(new NudgeCommand(this, oldPositions, newPositions));
             emit pageModified();
             updateSelectionDecorator();
             event->accept();
@@ -927,7 +1038,8 @@ void EditorScene::keyPressEvent(QKeyEvent* event)
 void EditorScene::clearPage()
 {
     clearSelection();
-    clear();  // 移除并删除所有Item
+    clear();  // 移除并删除所有Item（包括m_pageBackgroundItem）
+    m_pageBackgroundItem = nullptr;  // 悬空指针重置
     m_selectionDecorator = nullptr;
     // 编辑Item和参考线Item已被clear()删除，仅重置指针/列表
     m_editingTextItem = nullptr;

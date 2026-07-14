@@ -61,9 +61,9 @@ EditorView::EditorView(QWidget* parent)
     // 拖拽模式：不使用内置RubberBand，选中/编辑交互由EditorScene处理
     setDragMode(QGraphicsView::NoDrag);
 
-    // 性能优化：使用边界矩形更新模式，平衡性能与拖拽流畅度
-    // MinimalViewportUpdate在快速拖拽时可能导致重绘延迟
-    setViewportUpdateMode(QGraphicsView::BoundingRectViewportUpdate);
+    // 全视口更新：确保每次重绘都完整调用drawBackground绘制白纸背景。
+    // BoundingRectViewportUpdate仅更新Item包围矩形，不保证背景层重绘。
+    setViewportUpdateMode(QGraphicsView::FullViewportUpdate);
 
     // 不缓存背景：CacheBackground会缓存view的灰色背景，
     // 覆盖Scene::drawBackground绘制的白色纸张矩形，导致白纸不显示。

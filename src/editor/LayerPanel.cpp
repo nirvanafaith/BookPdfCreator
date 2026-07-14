@@ -280,11 +280,13 @@ private:
 // Qt::UserRole + 1: 存储元素当前 zOrder (int)，用于拖拽后比较变化
 static const int kElementIdRole = Qt::UserRole;
 static const int kZOrderRole    = Qt::UserRole + 1;
+static const int kIsBackgroundRole = Qt::UserRole + 2;  // 标记是否为背景项
 
 LayerPanel::LayerPanel(QWidget* parent)
     : QWidget(parent)
     , m_listWidget(nullptr)
     , m_syncing(false)
+    , m_backgroundItem(nullptr)
 {
     setupUi();
     setupConnections();
@@ -340,6 +342,7 @@ void LayerPanel::updateLayers(const QList<PageElementPtr>& elements)
 
     // 清除旧条目（setItemWidget 设置的 widget 随 item 一并删除）
     m_listWidget->clear();
+    m_backgroundItem = nullptr;  // clear()已删除该项，重置指针
 
     // 按 zOrder 降序填充：elements 已升序，从末尾向前遍历，
     // 最先添加（z 最大）出现在列表顶部（row 0）。
@@ -394,6 +397,43 @@ void LayerPanel::clearLayers()
 {
     m_syncing = true;
     m_listWidget->clear();
+    m_backgroundItem = nullptr;  // clear()已删除该项，重置指针
+    m_syncing = false;
+}
+
+void LayerPanel::setBackgroundItem(const QString& name, bool visible)
+{
+    // 移除旧的背景项（若存在）
+    if (m_backgroundItem) {
+        delete m_listWidget->takeItem(m_listWidget->row(m_backgroundItem));
+        m_backgroundItem = nullptr;
+    }
+
+    m_syncing = true;
+
+    // 在列表末尾（最底层）插入背景项
+    QListWidgetItem* item = new QListWidgetItem;
+    item->setData(kElementIdRole, QStringLiteral("__background__"));
+    item->setData(kZOrderRole, -10000);
+    item->setData(kIsBackgroundRole, true);
+    m_listWidget->addItem(item);
+
+    // 背景项使用Shape类型图标（矩形）表示纸张
+    LayerItemWidget* widget = new LayerItemWidget(
+        QStringLiteral("__background__"), PageElementData::Shape, name,
+        visible, false, m_listWidget);
+    widget->setListItem(item);
+    m_listWidget->setItemWidget(item, widget);
+    item->setSizeHint(widget->sizeHint());
+
+    // 连接可见性按钮
+    connect(widget->visibilityButton(), &QToolButton::toggled, this,
+            [this, widget](bool checked) {
+                if (m_syncing) return;
+                emit elementVisibilityChanged(widget->elementId(), checked);
+            });
+
+    m_backgroundItem = item;
     m_syncing = false;
 }
 
@@ -418,6 +458,9 @@ void LayerPanel::onContextMenu(const QPoint& pos)
 {
     QListWidgetItem* item = m_listWidget->itemAt(pos);
     if (!item) return;
+
+    // 背景项不支持右键菜单操作
+    if (item->data(kIsBackgroundRole).toBool()) return;
 
     QString id = item->data(kElementIdRole).toString();
 
@@ -449,14 +492,28 @@ void LayerPanel::onDragReordered()
 
     m_syncing = true;
 
+    // 背景项必须始终在最底层（最后一行）。如果被拖动则移回末尾。
+    if (m_backgroundItem) {
+        int bgRow = m_listWidget->row(m_backgroundItem);
+        int lastRow = count - 1;
+        if (bgRow != lastRow) {
+            // 将背景项移到最后一行
+            m_listWidget->takeItem(bgRow);
+            m_listWidget->insertItem(lastRow, m_backgroundItem);
+        }
+    }
+
     // 收集 zOrder 变化
-    // 列表顶部（row 0）对应最高 zOrder = count - 1
-    // 列表底部（row count-1）对应最低 zOrder = 0
+    // 列表顶部（row 0）对应最高 zOrder
+    // 非背景项数量 = count - 1（若存在背景项），否则 = count
     QList<QPair<QString, int>> changes;
+    int nonBgCount = m_backgroundItem ? count - 1 : count;
     for (int i = 0; i < count; ++i) {
         QListWidgetItem* item = m_listWidget->item(i);
+        // 跳过背景项，不参与zOrder重分配
+        if (item->data(kIsBackgroundRole).toBool()) continue;
         QString id = item->data(kElementIdRole).toString();
-        int newZ = count - 1 - i;
+        int newZ = nonBgCount - 1 - i;
         int oldZ = item->data(kZOrderRole).toInt();
         if (newZ != oldZ) {
             item->setData(kZOrderRole, newZ);
@@ -466,9 +523,9 @@ void LayerPanel::onDragReordered()
 
     m_syncing = false;
 
-    // 发出 zOrder 变化信号（控制器据此更新数据模型）
-    for (const auto& c : changes) {
-        emit elementZOrderChanged(c.first, c.second);
+    // 发出批量zOrder变化信号，控制器用beginMacro/endMacro包裹实现一次性撤销
+    if (!changes.isEmpty()) {
+        emit elementZOrderBatchChanged(changes);
     }
 }
 

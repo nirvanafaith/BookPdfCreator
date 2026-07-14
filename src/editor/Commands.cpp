@@ -108,6 +108,8 @@ static void rebuildItemWithText(EditorScene* scene, const QString& elementId,
     TextElementData* clone = static_cast<TextElementData*>(
         oldItem->elementData().constData()->clone());
     clone->setText(newText);
+    // 清除旧的字符级格式，防止格式范围越界新文本长度导致渲染崩溃
+    clone->clearCharFormats();
     PageElementPtr newElem(clone);
 
     // 移除并销毁旧Item
@@ -403,5 +405,49 @@ void ZOrderCommand::redo()
 {
     if (!m_scene) return;
     applyZOrder(m_scene, m_elementId, m_newZ);
+    m_scene->update();
+}
+
+// ============================================================
+// NudgeCommand - 方向键微移命令实现
+// ============================================================
+
+NudgeCommand::NudgeCommand(EditorScene* scene,
+                           const QMap<QString, QPointF>& oldPositions,
+                           const QMap<QString, QPointF>& newPositions,
+                           QUndoCommand* parent)
+    : QUndoCommand(parent)
+    , m_scene(scene)
+    , m_oldPositions(oldPositions)
+    , m_newPositions(newPositions)
+{
+    setText(QStringLiteral("微移"));
+}
+
+void NudgeCommand::undo()
+{
+    if (!m_scene) return;
+    // 恢复各元素到旧位置
+    for (auto it = m_oldPositions.constBegin(); it != m_oldPositions.constEnd(); ++it) {
+        BaseEditorItem* item = findItemByElementId(m_scene, it.key());
+        if (item) {
+            item->setPos(it.value());
+            item->syncToData();
+        }
+    }
+    m_scene->update();
+}
+
+void NudgeCommand::redo()
+{
+    if (!m_scene) return;
+    // 应用各元素的新位置
+    for (auto it = m_newPositions.constBegin(); it != m_newPositions.constEnd(); ++it) {
+        BaseEditorItem* item = findItemByElementId(m_scene, it.key());
+        if (item) {
+            item->setPos(it.value());
+            item->syncToData();
+        }
+    }
     m_scene->update();
 }

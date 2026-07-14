@@ -3,6 +3,7 @@
 
 #include <QWidget>
 #include <QList>
+#include <QPair>
 
 #include "PageElement.h"
 
@@ -44,11 +45,16 @@ public:
     // 清空图层列表
     void clearLayers();
 
+    // 设置背景图层项（固定显示在列表最底层，不可拖拽/删除）
+    // name为显示名称，visible控制眼睛按钮状态
+    void setBackgroundItem(const QString& name, bool visible);
+
 signals:
     void elementSelected(const QString& elementId);
     void elementVisibilityChanged(const QString& elementId, bool visible);
     void elementLockChanged(const QString& elementId, bool locked);
     void elementZOrderChanged(const QString& elementId, int newZ);
+    void elementZOrderBatchChanged(const QList<QPair<QString, int>>& changes);
     void elementDeleted(const QString& elementId);
     void elementDuplicated(const QString& elementId);
     void bringToFront(const QString& elementId);
@@ -63,6 +69,7 @@ protected:
 private:
     QListWidget* m_listWidget;
     bool m_syncing;  // 同步更新标志，防止程序化修改触发反馈信号
+    QListWidgetItem* m_backgroundItem;  // 背景图层项（固定最底层，不可拖拽/删除）
 
     void setupUi();
     void setupConnections();
