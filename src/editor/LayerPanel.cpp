@@ -256,7 +256,10 @@ protected:
                 list->setCurrentItem(m_item, QItemSelectionModel::ClearAndSelect);
             }
         }
-        QWidget::mousePressEvent(event);
+        // 必须ignore而非调用QWidget::mousePressEvent(event)，否则事件被accept，
+        // QListWidget viewport无法接收鼠标按下事件，导致InternalMove拖拽无法启动。
+        // ignore后事件传播到QListWidget viewport，由其处理选中+拖拽发起。
+        event->ignore();
     }
 
 private:

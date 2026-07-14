@@ -146,25 +146,25 @@ void PropertyPanel::setupUi()
     alignLayout->setContentsMargins(0, 0, 0, 0);
     alignLayout->setSpacing(2);
 
-    m_alignLeftBtn = new QPushButton(QStringLiteral("L"), alignWidget);
+    m_alignLeftBtn = new QPushButton(QStringLiteral("居左"), alignWidget);
     m_alignLeftBtn->setToolTip(QStringLiteral("左对齐"));
     m_alignLeftBtn->setCheckable(true);
-    m_alignLeftBtn->setFixedSize(32, 24);
+    m_alignLeftBtn->setFixedSize(44, 24);
 
-    m_alignCenterBtn = new QPushButton(QStringLiteral("C"), alignWidget);
+    m_alignCenterBtn = new QPushButton(QStringLiteral("居中"), alignWidget);
     m_alignCenterBtn->setToolTip(QStringLiteral("居中对齐"));
     m_alignCenterBtn->setCheckable(true);
-    m_alignCenterBtn->setFixedSize(32, 24);
+    m_alignCenterBtn->setFixedSize(44, 24);
 
-    m_alignRightBtn = new QPushButton(QStringLiteral("R"), alignWidget);
+    m_alignRightBtn = new QPushButton(QStringLiteral("居右"), alignWidget);
     m_alignRightBtn->setToolTip(QStringLiteral("右对齐"));
     m_alignRightBtn->setCheckable(true);
-    m_alignRightBtn->setFixedSize(32, 24);
+    m_alignRightBtn->setFixedSize(44, 24);
 
-    m_alignJustifyBtn = new QPushButton(QStringLiteral("J"), alignWidget);
+    m_alignJustifyBtn = new QPushButton(QStringLiteral("两端"), alignWidget);
     m_alignJustifyBtn->setToolTip(QStringLiteral("两端对齐"));
     m_alignJustifyBtn->setCheckable(true);
-    m_alignJustifyBtn->setFixedSize(32, 24);
+    m_alignJustifyBtn->setFixedSize(44, 24);
 
     alignLayout->addWidget(m_alignLeftBtn);
     alignLayout->addWidget(m_alignCenterBtn);

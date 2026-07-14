@@ -37,6 +37,20 @@ PageElementPtr BaseEditorItem::elementData() const
 }
 
 // ============================================================
+// setElementData - 原地替换元素数据
+//
+// 用于属性面板修改属性时，避免rebuildItemWithModifiedElement
+// 删除/重建Item触发selectionChanged打断PropertyPanel状态。
+// 替换后调用syncFromData()刷新位置/尺寸/旋转/可见性，
+// 再update()触发重绘。
+// ============================================================
+void BaseEditorItem::setElementData(const PageElementPtr& element)
+{
+    m_element = element;
+    syncFromData();
+}
+
+// ============================================================
 // syncFromData - 数据 -> Item
 //
 // 从PageElementData读取位置、尺寸、旋转、可见性、层级等，

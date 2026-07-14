@@ -88,6 +88,9 @@ public:
     // 选中状态：返回当前选中的编辑器Item列表
     QList<BaseEditorItem*> selectedEditorItems() const;
 
+    // 更新选中装饰器位置和尺寸（供MainWindow在原地更新元素后调用）
+    void updateSelectionDecorator();
+
 signals:
     // 选中元素变化（携带元素数据列表）
     // 注意：此信号重载了QGraphicsScene::selectionChanged()（无参版本），
@@ -127,8 +130,6 @@ private:
     void createItemsFromPageData(const PageDataPtr& pageData);
     // 创建单个元素对应的Item（根据elementType分派到Text/Image/Shape）
     BaseEditorItem* createItemForElement(const PageElementPtr& element);
-    // 更新选中装饰器位置和尺寸
-    void updateSelectionDecorator();
     // 变换手柄hit-test：返回手柄位置，无手柄返回-1（强转为HandlePosition的负值）
     HandlePosition handleAt(const QPointF& pos) const;
     // 开始拖拽操作

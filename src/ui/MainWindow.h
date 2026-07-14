@@ -121,6 +121,10 @@ private:
     // 纸张尺寸切换
     void changePaperSize(const PaperSize& paper);   // 切换纸张尺寸并刷新场景/视图
     void onCustomPaper();                           // 弹出自定义纸张对话框
+    // 原地更新元素数据（不删除/重建Item），用于属性面板修改属性
+    // 避免selectionChanged打断PropertyPanel状态
+    void updateElementInPlace(const QString& elementId,
+        std::function<void(PageElementData*)> modifier);
     // 重建Item以应用元素数据修改（字体/颜色/锁定等）
     // modifier对clone后的元素数据进行修改，然后根据类型创建新Item替换旧Item
     BaseEditorItem* rebuildItemWithModifiedElement(const QString& elementId,

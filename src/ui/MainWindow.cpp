@@ -547,10 +547,10 @@ void MainWindow::connectSignals()
             this, &MainWindow::onElementRotated);
 
     // 文本属性变更信号
-    // 通过rebuildItemWithModifiedElement重建Item以应用格式变更
+    // 原地更新元素数据（不删除/重建Item），避免selectionChanged打断PropertyPanel状态
     connect(m_propertyPanel, &PropertyPanel::fontChanged,
             this, [this](const QString& elementId, const QFont& font) {
-        rebuildItemWithModifiedElement(elementId, [&font](PageElementData* elem) {
+        updateElementInPlace(elementId, [&font](PageElementData* elem) {
             if (elem->elementType() == PageElementData::Text) {
                 static_cast<TextElementData*>(elem)->setFont(font);
             }
@@ -558,7 +558,7 @@ void MainWindow::connectSignals()
     });
     connect(m_propertyPanel, &PropertyPanel::fontSizeChanged,
             this, [this](const QString& elementId, int size) {
-        rebuildItemWithModifiedElement(elementId, [size](PageElementData* elem) {
+        updateElementInPlace(elementId, [size](PageElementData* elem) {
             if (elem->elementType() == PageElementData::Text) {
                 QFont f = static_cast<TextElementData*>(elem)->font();
                 f.setPointSize(size);
@@ -568,7 +568,7 @@ void MainWindow::connectSignals()
     });
     connect(m_propertyPanel, &PropertyPanel::textColorChanged,
             this, [this](const QString& elementId, const QColor& color) {
-        rebuildItemWithModifiedElement(elementId, [&color](PageElementData* elem) {
+        updateElementInPlace(elementId, [&color](PageElementData* elem) {
             if (elem->elementType() == PageElementData::Text) {
                 static_cast<TextElementData*>(elem)->setTextColor(color);
             }
@@ -576,7 +576,7 @@ void MainWindow::connectSignals()
     });
     connect(m_propertyPanel, &PropertyPanel::alignmentChanged,
             this, [this](const QString& elementId, Qt::Alignment align) {
-        rebuildItemWithModifiedElement(elementId, [align](PageElementData* elem) {
+        updateElementInPlace(elementId, [align](PageElementData* elem) {
             if (elem->elementType() == PageElementData::Text) {
                 static_cast<TextElementData*>(elem)->setAlignment(align);
             }
@@ -586,7 +586,7 @@ void MainWindow::connectSignals()
     // 图片属性变更信号
     connect(m_propertyPanel, &PropertyPanel::opacityChanged,
             this, [this](const QString& elementId, qreal opacity) {
-        rebuildItemWithModifiedElement(elementId, [opacity](PageElementData* elem) {
+        updateElementInPlace(elementId, [opacity](PageElementData* elem) {
             if (elem->elementType() == PageElementData::Image) {
                 static_cast<ImageElementData*>(elem)->setOpacity(opacity);
             }
@@ -594,7 +594,7 @@ void MainWindow::connectSignals()
     });
     connect(m_propertyPanel, &PropertyPanel::scaleFactorChanged,
             this, [this](const QString& elementId, qreal scale) {
-        rebuildItemWithModifiedElement(elementId, [scale](PageElementData* elem) {
+        updateElementInPlace(elementId, [scale](PageElementData* elem) {
             if (elem->elementType() == PageElementData::Image) {
                 static_cast<ImageElementData*>(elem)->setScaleFactor(scale);
             }
@@ -1905,8 +1905,10 @@ void MainWindow::onElementVisibilityChanged(const QString& elementId, bool visib
         item->setVisible(visible);
         item->syncToData();
         item->update();
-        // 持久化到m_editedPages，翻页后状态保持
-        onPageModified();
+        // 仅持久化到m_editedPages，不调用onPageModified()以避免refreshLayerPanel()重建列表
+        // 重建列表会m_listWidget->clear()删除正在发射toggled信号的QToolButton发送者，
+        // 导致Qt信号处理异常。眼睛图标已由用户点击更新，无需重建面板。
+        saveCurrentPageData();
     }
 }
 
@@ -1928,7 +1930,9 @@ void MainWindow::onElementLockChanged(const QString& elementId, bool locked)
         // 锁定的元素不可选中、不可移动
         newItem->setFlag(QGraphicsItem::ItemIsSelectable, !locked);
         newItem->setFlag(QGraphicsItem::ItemIsMovable, !locked);
-        onPageModified();
+        // 仅持久化，不调用onPageModified()以避免refreshLayerPanel()在toggled信号
+        // 发射期间删除发送者锁定按钮。锁定图标已由用户点击更新。
+        saveCurrentPageData();
     }
 }
 
@@ -2165,6 +2169,42 @@ BaseEditorItem* MainWindow::findItemById(const QString& id) const
         }
     }
     return nullptr;
+}
+
+// ============================================================
+// updateElementInPlace - 原地更新元素数据
+//
+// 用于属性面板修改属性时，避免rebuildItemWithModifiedElement
+// 删除/重建Item触发selectionChanged→clearProperties/showProperties
+// 打断PropertyPanel状态（清空m_currentElementId或设m_updating=true）。
+//
+// 流程：findItemById → clone元素 → 应用modifier → setElementData替换
+// → saveCurrentPageData持久化 → updateSelectionDecorator刷新装饰器
+// 不触发selectionChanged，不重建图层面板。
+// ============================================================
+void MainWindow::updateElementInPlace(const QString& elementId,
+    std::function<void(PageElementData*)> modifier)
+{
+    if (!m_editorView || !m_editorView->editorScene()) return;
+
+    BaseEditorItem* item = findItemById(elementId);
+    if (!item) return;
+
+    // clone元素数据并应用修改
+    PageElementData* clone = item->elementData().constData()->clone();
+    modifier(clone);
+    PageElementPtr newElem(clone);
+
+    // 原地替换元素数据（不删除/重建Item）
+    item->setElementData(newElem);
+
+    // 持久化到m_editedPages
+    saveCurrentPageData();
+
+    // 刷新选中装饰器（位置/尺寸可能变化）
+    if (m_editorView->editorScene()) {
+        m_editorView->editorScene()->updateSelectionDecorator();
+    }
 }
 
 BaseEditorItem* MainWindow::rebuildItemWithModifiedElement(const QString& elementId,

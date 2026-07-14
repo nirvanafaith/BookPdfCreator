@@ -22,9 +22,22 @@ public:
     void paint(QPainter* painter, const QStyleOptionGraphicsItem* option,
                QWidget* widget) override;
 
+    // 覆盖基类：boundingRect贴合实际图片渲染区域（含居中偏移），
+    // 而非容器rect。keepAspectRatio时图片四周可能留白。
+    QRectF boundingRect() const override;
+
+    // 覆盖基类：在图片实际渲染区域绘制选中边框
+    void drawSelectionBorder(QPainter* painter) override;
+
     // 类型标识
     enum { Type = UserType + 3 };
     int type() const override { return Type; }
+
+private:
+    // 计算图片在item本地坐标系中的实际渲染区域（已居中）。
+    // 计算逻辑与ElementRenderer::renderImage一致。
+    // 返回无效QRectF表示图片未加载（调用方应回退到基类行为）。
+    QRectF computeActualImageRect() const;
 };
 
 #endif // IMAGEEDITORITEM_H

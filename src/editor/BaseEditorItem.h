@@ -34,6 +34,11 @@ public:
     // 获取关联的数据元素（共享引用，只读访问）
     PageElementPtr elementData() const;
 
+    // 原地替换元素数据（不删除/重建Item）
+    // 用于属性面板修改属性时避免selectionChanged打断PropertyPanel状态。
+    // 调用syncFromData()+update()刷新Item显示。
+    void setElementData(const PageElementPtr& element);
+
     // 数据 -> Item：根据元素数据更新Item的位置、尺寸、旋转等
     virtual void syncFromData();
     // Item -> 数据：将Item当前状态写回元素数据（通过clone创建新副本）
@@ -56,7 +61,8 @@ protected:
     PageElementPtr m_element;  // 关联的元素数据（隐式共享，修改时clone）
 
     // 选中时绘制蓝色虚线边框（在本地坐标系，0,0到width,height）
-    void drawSelectionBorder(QPainter* painter);
+    // 虚函数：子类可覆盖以将边框贴合到实际渲染内容（如图片/文本）而非容器rect
+    virtual void drawSelectionBorder(QPainter* painter);
 
     // 选中边框边距（为虚线留出空间）
     static const qreal SELECTION_MARGIN;

@@ -25,6 +25,7 @@
 #include <QLineF>
 #include <QtMath>
 #include <QGraphicsTextItem>
+#include <QGraphicsView>
 #include <QTextDocument>
 #include <QTextCursor>
 #include <QTextBlock>
@@ -386,6 +387,10 @@ void EditorScene::mousePressEvent(QGraphicsSceneMouseEvent* event)
     }
 
     if (baseItem) {
+        // 确保EditorView获得焦点，使键盘事件（如Delete）能到达场景
+        if (!views().isEmpty()) {
+            views().first()->setFocus();
+        }
         // 点中元素
         if (event->modifiers() & Qt::ControlModifier) {
             // Ctrl+点击：切换选中状态（追加/移除）

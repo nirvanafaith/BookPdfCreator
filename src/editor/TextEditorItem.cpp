@@ -7,6 +7,13 @@
 #include <QGraphicsSceneMouseEvent>
 #include <QEvent>
 #include <QFocusEvent>
+#include <QTextLayout>
+#include <QTextLine>
+#include <QFontMetrics>
+#include <QBrush>
+#include <QPen>
+#include <QColor>
+#include <QtGlobal>
 
 // ============================================================
 // 构造函数
@@ -175,4 +182,155 @@ bool TextEditorItem::eventFilter(QObject* watched, QEvent* event)
         // 不拦截事件，让QGraphicsTextItem正常处理焦点丢失
     }
     return QObject::eventFilter(watched, event);
+}
+
+// ============================================================
+// computeActualTextRect - 计算文本实际内容区域
+//
+// 复制ElementRenderer::renderText中的QTextLayout布局逻辑，
+// 得到文本内容在item本地坐标系（0,0=rect.topLeft）中的实际包围盒。
+//
+// 布局参数与渲染完全一致：
+//   - lineWidth = rect.width()
+//   - lineHeight = text->lineHeight()（0时自动用QFontMetrics::height()）
+//   - 水平对齐：左/中/右（justify按左处理，与渲染一致）
+//   - 垂直对齐：上/中/下
+//   - charFormats：通过setAdditionalFormats应用混合格式
+//
+// 包围盒计算：
+//   - 宽度 = 所有行naturalTextWidth的最大值
+//   - 高度 = totalHeight（行数 * lineHeight，与渲染的vOffset计算一致）
+//   - X偏移：根据对齐方式和最大行宽计算（与最宽行的渲染位置一致）
+//   - Y偏移 = vOffset（根据垂直对齐和totalHeight计算）
+//
+// 返回无效QRectF表示文本为空，调用方应回退到基类实现。
+// ============================================================
+QRectF TextEditorItem::computeActualTextRect() const
+{
+    const TextElementData* text =
+        static_cast<const TextElementData*>(m_element.constData());
+
+    if (text->text().isEmpty()) {
+        return QRectF();  // 空文本，回退
+    }
+
+    QRectF rect = text->rect();
+    QFont font = text->font();
+    Qt::Alignment align = text->alignment();
+
+    // 行高计算：0=自动用QFontMetrics::height()，>0=固定值（与渲染一致）
+    QFontMetrics fm(font);
+    qreal lineHeight = text->lineHeight();
+    if (lineHeight <= 0) {
+        lineHeight = fm.height();
+    }
+
+    // 创建文本布局（device=nullptr，仅用于布局计算不用于绘制）
+    QTextLayout textLayout(text->text(), font, nullptr);
+
+    // 应用字符级格式（CharFormat：混合粗体/斜体/字号/颜色，与渲染一致）
+    QList<TextElementData::CharFormat> charFormats = text->charFormats();
+    if (!charFormats.isEmpty()) {
+        QList<QTextLayout::FormatRange> formats;
+        for (const TextElementData::CharFormat& cf : charFormats) {
+            QTextLayout::FormatRange range;
+            range.start = cf.start;
+            range.length = cf.length;
+            range.format.setFont(cf.font);
+            range.format.setForeground(QBrush(cf.color));
+            formats.append(range);
+        }
+        textLayout.setAdditionalFormats(formats);
+    }
+
+    // 布局文本行（与渲染逻辑完全一致）
+    textLayout.beginLayout();
+    qreal y = 0.0;
+    qreal maxLineWidth = 0.0;
+    int lineCount = 0;
+
+    while (true) {
+        QTextLine line = textLayout.createLine();
+        if (!line.isValid()) break;
+
+        line.setLineWidth(rect.width());
+        maxLineWidth = qMax(maxLineWidth, line.naturalTextWidth());
+        y += lineHeight;
+        lineCount++;
+    }
+    textLayout.endLayout();
+
+    if (lineCount == 0) {
+        return QRectF();  // 无有效行，回退
+    }
+
+    qreal totalHeight = y;  // = lineCount * lineHeight（与渲染的totalHeight一致）
+
+    // 垂直对齐：计算Y偏移（与渲染逻辑完全一致）
+    qreal vOffset = 0.0;
+    if (align & Qt::AlignVCenter) {
+        vOffset = (rect.height() - totalHeight) / 2.0;
+        if (vOffset < 0) vOffset = 0.0;
+    } else if (align & Qt::AlignBottom) {
+        vOffset = rect.height() - totalHeight;
+        if (vOffset < 0) vOffset = 0.0;
+    }
+
+    // 水平对齐：根据最宽行计算包围盒X偏移
+    // （最宽行的渲染位置即为包围盒的左/右边界，各对齐方式下均成立）
+    qreal x = 0.0;
+    if (align & Qt::AlignHCenter) {
+        x = (rect.width() - maxLineWidth) / 2.0;
+    } else if (align & Qt::AlignRight) {
+        x = rect.width() - maxLineWidth;
+    }
+    // else（AlignLeft / AlignJustify）: x = 0（与渲染一致）
+
+    // 包围盒在item本地坐标系（0,0 = rect.topLeft）
+    return QRectF(x, vOffset, maxLineWidth, totalHeight);
+}
+
+// ============================================================
+// boundingRect - 贴合文本实际内容区域的包围矩形
+//
+// 元素rect通常比文本内容宽（尤其左对齐时右侧留白），
+// 此方法返回文本实际区域+SELECTION_MARGIN。
+// 文本为空时回退到基类实现（整个rect+margin）。
+// ============================================================
+QRectF TextEditorItem::boundingRect() const
+{
+    QRectF textRect = computeActualTextRect();
+    if (!textRect.isValid()) {
+        // 文本为空或无有效行，回退到基类（容器rect + margin）
+        return BaseEditorItem::boundingRect();
+    }
+
+    const qreal m = SELECTION_MARGIN;
+    return QRectF(textRect.x() - m, textRect.y() - m,
+                  textRect.width() + 2.0 * m, textRect.height() + 2.0 * m);
+}
+
+// ============================================================
+// drawSelectionBorder - 在文本实际内容区域绘制选中边框
+//
+// 覆盖基类实现，将边框绘制在文本实际内容区域而非容器rect边缘。
+// 文本为空时回退到基类实现。
+// ============================================================
+void TextEditorItem::drawSelectionBorder(QPainter* painter)
+{
+    QRectF textRect = computeActualTextRect();
+    if (!textRect.isValid()) {
+        // 文本为空或无有效行，回退到基类（在容器rect边缘绘制）
+        BaseEditorItem::drawSelectionBorder(painter);
+        return;
+    }
+
+    painter->save();
+    QPen pen(QColor(25, 118, 210), 1, Qt::DashLine);
+    painter->setPen(pen);
+    painter->setBrush(Qt::NoBrush);
+
+    painter->drawRect(textRect);
+
+    painter->restore();
 }

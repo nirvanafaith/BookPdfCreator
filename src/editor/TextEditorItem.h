@@ -41,6 +41,13 @@ public:
     void paint(QPainter* painter, const QStyleOptionGraphicsItem* option,
                QWidget* widget) override;
 
+    // 覆盖基类：boundingRect贴合实际文本内容区域，
+    // 而非容器rect（rect通常比文本宽）。
+    QRectF boundingRect() const override;
+
+    // 覆盖基类：在文本实际内容区域绘制选中边框
+    void drawSelectionBorder(QPainter* painter) override;
+
     // 类型标识
     enum { Type = UserType + 2 };
     int type() const override { return Type; }
@@ -55,6 +62,12 @@ protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
 
 private:
+    // 计算文本在item本地坐标系中的实际内容区域。
+    // 复制ElementRenderer::renderText的QTextLayout布局逻辑，
+    // 得到文本内容的实际包围盒（含对齐偏移）。
+    // 返回无效QRectF表示文本为空（调用方应回退到基类行为）。
+    QRectF computeActualTextRect() const;
+
     QGraphicsTextItem* m_editItem;  // 编辑模式用的文本编辑子Item（懒创建）
     bool m_editing;                 // 是否处于编辑模式
 };
