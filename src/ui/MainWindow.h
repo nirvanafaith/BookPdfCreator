@@ -48,6 +48,8 @@ private slots:
     void onSaveProject();   // 保存项目
     void onLoadProject();   // 加载项目
     void onOpenRecentProject(); // 打开最近项目
+    void onExportLayout();  // 导出版式
+    void onImportLayout();  // 导入版式
     void onExit();
 
     // 帮助菜单槽函数

@@ -36,9 +36,12 @@
 #include <QFutureWatcher>
 #include <QDockWidget>
 #include <QJsonDocument>
+#include <QJsonObject>
 #include <QJsonArray>
 #include <QJsonValue>
 #include <QFile>
+#include <QDateTime>
+#include <QUuid>
 #include <QGraphicsItem>
 #include <QMenu>
 #include <QSettings>
@@ -162,6 +165,9 @@ void MainWindow::createMenus()
     m_fileMenu->addSeparator();
     m_fileMenu->addAction(m_saveProjectAction);
     m_fileMenu->addAction(m_exportPdfAction);
+    m_fileMenu->addSeparator();
+    m_fileMenu->addAction(tr("导出版式(&E)..."), this, &MainWindow::onExportLayout, QKeySequence(tr("Ctrl+Shift+E")));
+    m_fileMenu->addAction(tr("导入版式(&I)..."), this, &MainWindow::onImportLayout, QKeySequence(tr("Ctrl+Shift+I")));
     m_fileMenu->addSeparator();
     m_fileMenu->addAction(m_exitAction);
 
@@ -1091,6 +1097,203 @@ void MainWindow::onSaveProject()
 
     // 添加到最近项目列表
     addToRecentProjects(savePath);
+}
+
+// ============================================================
+// onExportLayout - 导出版式
+//
+// 将当前页面的所有元素序列化为 .layout 版式文件。
+// 版式文件包含版本号、创建时间、纸张尺寸及元素列表，
+// 可用于跨项目复用页面布局。
+// ============================================================
+void MainWindow::onExportLayout()
+{
+    // 保存当前页数据到m_editedPages
+    saveCurrentPageData();
+
+    EditorScene* scene = m_editorView ? m_editorView->editorScene() : nullptr;
+    if (!scene) return;
+
+    // 获取当前页元素
+    if (m_currentPage < 0 || m_currentPage >= m_editedPages.size()) {
+        QMessageBox::warning(this, tr("提示"), tr("当前没有有效页面"));
+        return;
+    }
+    PageDataPtr currentPage = m_editedPages.value(m_currentPage);
+    if (!currentPage || currentPage->elements().isEmpty()) {
+        QMessageBox::warning(this, tr("提示"), tr("当前页面没有元素可导出"));
+        return;
+    }
+
+    // 文件保存对话框
+    QString defaultName = QStringLiteral("layout.layout");
+    QString defaultPath = m_openDir.isEmpty() ? defaultName : (m_openDir + "/" + defaultName);
+    QString savePath = QFileDialog::getSaveFileName(this,
+        tr("导出版式"), defaultPath, tr("版式文件 (*.layout)"));
+    if (savePath.isEmpty()) return;
+
+    // 确保扩展名为.layout
+    if (!savePath.endsWith(".layout", Qt::CaseInsensitive)) {
+        savePath += ".layout";
+    }
+
+    // 构建版式JSON
+    QJsonObject layout;
+    layout["version"] = QStringLiteral("1.0");
+    layout["created"] = QDateTime::currentDateTime().toString(Qt::ISODate);
+    layout["paperSize"] = PageSizeManager::instance().currentPaper().name;
+    layout["paperWidthMm"] = PageSizeManager::instance().currentPaper().widthMm;
+    layout["paperHeightMm"] = PageSizeManager::instance().currentPaper().heightMm;
+    layout["elementCount"] = currentPage->elements().size();
+
+    // 序列化元素列表（使用constData()只读访问，避免触发detach）
+    QJsonArray elemArray;
+    for (const PageElementPtr& elem : currentPage->elements()) {
+        elemArray.append(elem.constData()->toJson());
+    }
+    layout["elements"] = elemArray;
+
+    // 写入文件
+    QJsonDocument doc(layout);
+    QFile file(savePath);
+    if (!file.open(QIODevice::WriteOnly)) {
+        QMessageBox::warning(this, tr("导出失败"),
+            tr("无法写入文件: %1\n%2").arg(savePath).arg(file.errorString()));
+        return;
+    }
+
+    qint64 written = file.write(doc.toJson(QJsonDocument::Indented));
+    file.close();
+
+    if (written < 0) {
+        QMessageBox::warning(this, tr("导出失败"),
+            tr("写入文件失败: %1").arg(file.errorString()));
+        return;
+    }
+
+    // 更新最近打开目录
+    m_openDir = QFileInfo(savePath).absolutePath();
+    statusBar()->showMessage(tr("版式已导出: %1 (%2个元素)")
+        .arg(savePath).arg(elemArray.size()), 3000);
+}
+
+// ============================================================
+// onImportLayout - 导入版式
+//
+// 从 .layout 版式文件加载元素列表，替换当前页面的所有元素。
+// 导入操作通过撤销栈宏封装（删除现有元素 + 添加版式元素），
+// 支持一次撤销恢复。可选切换纸张尺寸以匹配版式。
+// ============================================================
+void MainWindow::onImportLayout()
+{
+    EditorScene* scene = m_editorView ? m_editorView->editorScene() : nullptr;
+    if (!scene) return;
+
+    QString loadPath = QFileDialog::getOpenFileName(this,
+        tr("导入版式"), m_openDir, tr("版式文件 (*.layout);;所有文件 (*.*)"));
+    if (loadPath.isEmpty()) return;
+
+    // 读取文件
+    QFile file(loadPath);
+    if (!file.open(QIODevice::ReadOnly)) {
+        QMessageBox::warning(this, tr("导入失败"),
+            tr("无法读取文件: %1\n%2").arg(loadPath).arg(file.errorString()));
+        return;
+    }
+
+    QJsonParseError parseError;
+    QJsonDocument doc = QJsonDocument::fromJson(file.readAll(), &parseError);
+    file.close();
+
+    if (parseError.error != QJsonParseError::NoError) {
+        QMessageBox::warning(this, tr("导入失败"),
+            tr("JSON解析错误: %1").arg(parseError.errorString()));
+        return;
+    }
+
+    if (!doc.isObject()) {
+        QMessageBox::warning(this, tr("导入失败"), tr("无效的版式文件格式"));
+        return;
+    }
+
+    QJsonObject layout = doc.object();
+    QJsonArray elemArray = layout.value("elements").toArray();
+    if (elemArray.isEmpty()) {
+        QMessageBox::warning(this, tr("提示"), tr("版式文件中没有元素"));
+        return;
+    }
+
+    // 确认替换
+    QMessageBox::StandardButton reply = QMessageBox::question(this,
+        tr("导入版式"),
+        tr("导入将清空当前页面的所有元素并替换为版式文件中的元素。\n是否继续？"),
+        QMessageBox::Yes | QMessageBox::No, QMessageBox::Yes);
+    if (reply != QMessageBox::Yes) return;
+
+    // 如果版式文件包含纸张尺寸，切换纸张
+    if (layout.contains("paperWidthMm") && layout.contains("paperHeightMm")) {
+        qreal wMm = layout.value("paperWidthMm").toDouble();
+        qreal hMm = layout.value("paperHeightMm").toDouble();
+        PaperSize paper;
+        paper.name = layout.value("paperSize").toString();
+        if (paper.name.isEmpty()) paper.name = tr("自定义");
+        paper.widthMm = wMm;
+        paper.heightMm = hMm;
+        changePaperSize(paper);
+    }
+
+    // 收集场景中所有现有的编辑器Item对应的元素数据
+    QList<PageElementPtr> elementsToDelete;
+    const QList<QGraphicsItem*> allItems = scene->items();
+    for (QGraphicsItem* gi : allItems) {
+        BaseEditorItem* bei = dynamic_cast<BaseEditorItem*>(gi);
+        if (bei) {
+            elementsToDelete.append(bei->elementData());
+        }
+    }
+
+    // 通过撤销栈宏封装：删除现有元素 + 添加版式元素
+    scene->undoStack()->beginMacro(QStringLiteral("导入版式"));
+
+    if (!elementsToDelete.isEmpty()) {
+        scene->undoStack()->push(new DeleteCommand(scene, elementsToDelete));
+    }
+
+    // 添加版式中的元素（按type字段分派创建对应类型的元素）
+    for (const QJsonValue& val : elemArray) {
+        QJsonObject elemJson = val.toObject();
+        QString typeStr = elemJson.value("type").toString();
+
+        PageElementData* rawElem = nullptr;
+        if (typeStr == QStringLiteral("text")) {
+            rawElem = new TextElementData();
+        } else if (typeStr == QStringLiteral("image")) {
+            rawElem = new ImageElementData();
+        } else if (typeStr == QStringLiteral("shape")) {
+            rawElem = new ShapeElementData();
+        } else {
+            // 跳过未知类型的元素
+            continue;
+        }
+
+        // 从JSON填充元素属性
+        rawElem->fromJson(elemJson);
+        // 生成新ID避免冲突
+        rawElem->setId(QUuid::createUuid().toString());
+
+        // addElement内部通过AddCommand入撤销栈
+        scene->addElement(PageElementPtr(rawElem));
+    }
+
+    scene->undoStack()->endMacro();
+
+    // 更新当前页数据
+    saveCurrentPageData();
+
+    // 更新最近打开目录
+    m_openDir = QFileInfo(loadPath).absolutePath();
+    int count = elemArray.size();
+    statusBar()->showMessage(tr("版式已导入: %1个元素").arg(count), 3000);
 }
 
 void MainWindow::onLoadProject()
