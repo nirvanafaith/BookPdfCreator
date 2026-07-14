@@ -2157,7 +2157,7 @@ BaseEditorItem* MainWindow::findItemById(const QString& id) const
 
     QList<QGraphicsItem*> items = m_editorView->editorScene()->items();
     for (QGraphicsItem* gitem : items) {
-        BaseEditorItem* eitem = qgraphicsitem_cast<BaseEditorItem*>(gitem);
+        BaseEditorItem* eitem = dynamic_cast<BaseEditorItem*>(gitem);
         if (eitem) {
             PageElementPtr elem = eitem->elementData();
             // 使用constData()而非直接在布尔上下文中使用elem，
