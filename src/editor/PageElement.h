@@ -12,6 +12,7 @@
 #include <QList>
 #include <QJsonObject>
 #include <QJsonArray>
+#include <QPainterPath>
 #include <Qt>
 
 // ============================================================
@@ -185,7 +186,7 @@ class ShapeElementData : public PageElementData
 {
 public:
     // 形状类型枚举
-    enum ShapeType { Rectangle, RoundedRect, Line, Ellipse };
+    enum ShapeType { Rectangle, RoundedRect, Line, Ellipse, Path };
 
     ShapeElementData();
     ShapeElementData(const ShapeElementData& other);
@@ -217,6 +218,10 @@ public:
     qreal cornerRadius() const;
     void setCornerRadius(qreal radius);
 
+    // 自定义路径（仅Path类型有效，编辑器内部使用，不序列化）
+    QPainterPath painterPath() const;
+    void setPainterPath(const QPainterPath& path);
+
     QJsonObject toJson() const override;
     void fromJson(const QJsonObject& json) override;
     PageElementData* clone() const override;
@@ -231,6 +236,7 @@ private:
     qreal m_borderWidth;         // 边框宽度
     bool m_hasBorder;            // 是否有边框
     qreal m_cornerRadius;        // 圆角半径
+    QPainterPath m_path;         // 自定义路径
 };
 
 // ============================================================

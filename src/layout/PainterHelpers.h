@@ -25,6 +25,11 @@ public:
                                    const QString& title,
                                    const QColor& textColor = COLOR_WHITE);
 
+    // 绘制右上角弧形条幅
+    static void drawCurvedBanner(QPainter* p, const QRectF& rect, const QColor& color,
+                                 const QString& title,
+                                 const QColor& textColor = COLOR_WHITE);
+
     // 绘制带红色圆点的标题栏
     static void drawSectionTitle(QPainter* p, const QRectF& rect, const QString& title,
                                  const QColor& bgColor = COLOR_INTRO_BG,

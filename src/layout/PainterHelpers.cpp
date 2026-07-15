@@ -63,6 +63,53 @@ void PainterHelpers::drawGradientBanner(QPainter* p, const QRectF& rect, const Q
     p->restore();
 }
 
+void PainterHelpers::drawCurvedBanner(QPainter* p, const QRectF& rect, const QColor& color,
+                                      const QString& title, const QColor& textColor)
+{
+    if (!p) return;
+
+    p->save();
+    p->setRenderHint(QPainter::Antialiasing, true);
+
+    qreal bannerWidth = rect.width() * 0.68;
+    qreal bannerLeft = rect.right() - bannerWidth;
+    QRectF bannerRect(bannerLeft, rect.top(), bannerWidth, rect.height());
+
+    QPainterPath path;
+    path.moveTo(bannerRect.topRight());
+    path.lineTo(bannerRect.bottomRight());
+    path.lineTo(bannerRect.bottomLeft());
+    QPointF ctrlPoint(bannerRect.left() - 30.0, bannerRect.center().y());
+    QPointF endPoint(bannerRect.topLeft());
+    path.quadTo(ctrlPoint, endPoint);
+    path.closeSubpath();
+
+    QLinearGradient gradient(bannerRect.topLeft(), bannerRect.bottomLeft());
+    gradient.setColorAt(0.0, color);
+    gradient.setColorAt(1.0, color.lighter(110));
+
+    p->setBrush(gradient);
+    p->setPen(Qt::NoPen);
+    p->drawPath(path);
+
+    if (!title.isEmpty()) {
+        QFont font = p->font();
+        font.setPixelSize(FONT_TITLE_SIZE);
+        font.setBold(true);
+        p->setFont(font);
+        p->setPen(textColor);
+
+        QFontMetrics fm(font);
+        QRectF textRect = fm.boundingRect(title);
+        qreal rightMargin = 20.0;
+        qreal x = bannerRect.right() - rightMargin - textRect.width();
+        qreal y = bannerRect.y() + (bannerRect.height() - textRect.height()) / 2.0 + fm.ascent();
+        p->drawText(QPointF(x, y), title);
+    }
+
+    p->restore();
+}
+
 void PainterHelpers::drawSectionTitle(QPainter* p, const QRectF& rect, const QString& title,
                                       const QColor& bgColor, const QColor& dotColor)
 {

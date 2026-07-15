@@ -34,6 +34,10 @@ private:
     void drawImageSection(QPainter* painter, const QRectF& rect,
                           const QString& title, const QStringList& imagePaths);
 
+    // 绘制目录区域
+    void drawTocSection(QPainter* painter, const QRectF& rect,
+                        const QStringList& chapterList);
+
     // 在指定区域内自适应等比缩放绘制多张图片
     void drawImagesInRect(QPainter* painter, const QRectF& rect,
                           const QStringList& imagePaths);
@@ -43,6 +47,10 @@ private:
     void generateImageSectionElements(QList<PageElementPtr>& elements, int& zOrder,
                                       const QRectF& rect,
                                       const QString& title, const QStringList& imagePaths);
+
+    // 生成目录区域的页面元素
+    void generateTocSectionElements(QList<PageElementPtr>& elements, int& zOrder,
+                                    const QRectF& rect, const QStringList& chapterList);
 
     int m_pageCount; // 总页数
 };

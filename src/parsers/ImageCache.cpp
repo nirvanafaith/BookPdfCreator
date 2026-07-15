@@ -69,13 +69,11 @@ QPixmap ImageCache::getThumbnail(const QString &path, const QSize &thumbSize)
         return *cached;
     }
 
-    // 加载图片并缩放到缩略图尺寸
+    // 加载图片（loadPixmapFromFile内部已通过QImageReader::setScaledSize预缩放，
+    // 保持宽高比缩放到thumbSize内，无需再次scaled）
     QPixmap pixmap = loadPixmapFromFile(path, thumbSize);
 
-    // 如果加载成功，保持宽高比缩放
-    if (!pixmap.isNull()) {
-        pixmap = pixmap.scaled(thumbSize, Qt::KeepAspectRatio, Qt::SmoothTransformation);
-    } else {
+    if (pixmap.isNull()) {
         pixmap = createPlaceholder(thumbSize);
     }
 

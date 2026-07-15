@@ -61,13 +61,13 @@ EditorView::EditorView(QWidget* parent)
     // 拖拽模式：不使用内置RubberBand，选中/编辑交互由EditorScene处理
     setDragMode(QGraphicsView::NoDrag);
 
-    // 全视口更新：确保每次重绘都完整调用drawBackground绘制白纸背景。
-    // BoundingRectViewportUpdate仅更新Item包围矩形，不保证背景层重绘。
-    setViewportUpdateMode(QGraphicsView::FullViewportUpdate);
+    // 使用BoundingRectViewportUpdate：仅更新变化Item的包围矩形区域，性能更优。
+    // 白色页面背景现由m_pageBackgroundItem（QGraphicsRectItem）渲染，
+    // Item变化会自动触发对应区域重绘，无需全视口更新。
+    setViewportUpdateMode(QGraphicsView::BoundingRectViewportUpdate);
 
     // 不缓存背景：CacheBackground会缓存view的灰色背景，
-    // 覆盖Scene::drawBackground绘制的白色纸张矩形，导致白纸不显示。
-    // 背景仅是纯色填充+矩形，绘制开销极小，无需缓存。
+    // 背景由m_pageBackgroundItem正常渲染，无需额外缓存。
     setCacheMode(QGraphicsView::CacheNone);
 
     // 滚动条策略：按需显示

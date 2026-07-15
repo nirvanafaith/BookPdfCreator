@@ -581,14 +581,20 @@ void EditorScene::mouseMoveEvent(QGraphicsSceneMouseEvent* event)
         break;
     }
     case RubberBand: {
+        // 先失效旧的橡皮筋区域（擦除旧矩形）
+        if (m_rubberBandRect.isValid()) {
+            invalidate(m_rubberBandRect.adjusted(-2, -2, 2, 2), ForegroundLayer);
+        }
         // 更新框选矩形
         m_rubberBandRect = QRectF(m_dragStartPos, pos).normalized();
         // 拖拽过程中使用IntersectsItemShape提供视觉反馈（相交即高亮）
         QPainterPath path;
         path.addRect(m_rubberBandRect);
         setSelectionArea(path, Qt::IntersectsItemShape);
-        // 触发前景层重绘以显示半透明蓝色矩形
-        invalidate(sceneRect(), ForegroundLayer);
+        // 只失效新的橡皮筋区域（绘制新矩形）
+        if (m_rubberBandRect.isValid()) {
+            invalidate(m_rubberBandRect.adjusted(-2, -2, 2, 2), ForegroundLayer);
+        }
         updateSelectionDecorator();
         break;
     }
@@ -778,9 +784,12 @@ void EditorScene::mouseReleaseEvent(QGraphicsSceneMouseEvent* event)
         QPainterPath path;
         path.addRect(m_rubberBandRect);
         setSelectionArea(path, Qt::ContainsItemShape);
+        // 只失效橡皮筋区域（清除框选矩形）
+        if (m_rubberBandRect.isValid()) {
+            invalidate(m_rubberBandRect.adjusted(-2, -2, 2, 2), ForegroundLayer);
+        }
         // 清除框选矩形视觉
         m_rubberBandRect = QRectF();
-        invalidate(sceneRect(), ForegroundLayer);
         break;
     }
     case None:

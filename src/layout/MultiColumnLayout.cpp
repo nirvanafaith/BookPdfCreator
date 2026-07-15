@@ -45,9 +45,12 @@ void MultiColumnLayout::calculateLayout()
 
     // 先计算每本书的高度
     QList<qreal> bookHeights;
+    int globalBookIndex = 0;
     for (const BookPtr& book : m_books) {
-        qreal height = calculateBookItemHeight(&tempPainter, book, contentWidth);
+        bool imageOnRight = (globalBookIndex % 2 == 0);
+        qreal height = calculateBookItemHeight(&tempPainter, book, contentWidth, imageOnRight);
         bookHeights.append(height);
+        globalBookIndex++;
     }
 
     // 分页：每页尽量放3本，或放满可用高度
@@ -110,8 +113,9 @@ int MultiColumnLayout::pageCount() const
     return m_pageCount;
 }
 
-qreal MultiColumnLayout::calculateBookItemHeight(QPainter* painter, const BookPtr& book, qreal contentWidth)
+qreal MultiColumnLayout::calculateBookItemHeight(QPainter* painter, const BookPtr& book, qreal contentWidth, bool imageOnRight)
 {
+    Q_UNUSED(imageOnRight)
     qreal textWidth = contentWidth - COVER_WIDTH - SPACING_TEXT_COVER_GAP;
 
     // 书名字体
@@ -197,10 +201,15 @@ void MultiColumnLayout::renderPage(QPainter* painter, int pageIndex, const QRect
     QRectF contentRect = pageRect.marginsRemoved(QMarginsF(PAGE_MARGIN, PAGE_MARGIN, PAGE_MARGIN, PAGE_MARGIN));
     qreal currentY = contentRect.top();
 
-    // ========== 1. 顶部橙红色横幅 ==========
+    int booksOnPreviousPages = 0;
+    for (int p = 0; p < pageIndex; ++p) {
+        booksOnPreviousPages += m_pages.at(p).size();
+    }
+
+    // ========== 1. 顶部橙红色弧形横幅 ==========
     QRectF bannerRect(contentRect.left(), currentY, contentRect.width(), BANNER_HEIGHT);
-    PainterHelpers::drawGradientBanner(painter, bannerRect, COLOR_BANNER_ORANGE,
-                                       QString::fromUtf8("大众类重点推荐图书"));
+    PainterHelpers::drawCurvedBanner(painter, bannerRect, COLOR_BANNER_ORANGE,
+                                     QString::fromUtf8("大众类重点推荐图书"));
     currentY += BANNER_HEIGHT + SPACING_BANNER_BOTTOM;
 
     // ========== 2. 遍历绘制该页书籍 ==========
@@ -210,8 +219,11 @@ void MultiColumnLayout::renderPage(QPainter* painter, int pageIndex, const QRect
         qreal itemHeight = pageHeights.at(i);
         QRectF itemRect(contentRect.left(), currentY, contentRect.width(), itemHeight);
 
+        int globalBookIndex = booksOnPreviousPages + i;
+        bool imageOnRight = (globalBookIndex % 2 == 0);
+
         // 绘制书籍条目
-        drawBookItem(painter, book, itemRect);
+        drawBookItem(painter, book, itemRect, imageOnRight);
         currentY += itemHeight;
 
         // 绘制分隔线（最后一本书不画）
@@ -228,21 +240,31 @@ void MultiColumnLayout::renderPage(QPainter* painter, int pageIndex, const QRect
     painter->setFont(pageNumFont);
     painter->setPen(QColor(128, 128, 128));
     QRectF pageNumRect(pageRect.right() - 80, pageRect.bottom() - 30, 70, 20);
-    QString pageNumText = QString::fromUtf8("第%1页").arg(pageIndex + 1);
+    QString pageNumText = QString::fromUtf8("%1").arg(pageIndex + 1);
     painter->drawText(pageNumRect, Qt::AlignCenter, pageNumText);
 }
 
-void MultiColumnLayout::drawBookItem(QPainter* painter, const BookPtr& book, const QRectF& itemRect)
+void MultiColumnLayout::drawBookItem(QPainter* painter, const BookPtr& book, const QRectF& itemRect, bool imageOnRight)
 {
     qreal textWidth = itemRect.width() - COVER_WIDTH - SPACING_TEXT_COVER_GAP;
-
-    // ========== 右侧封面 ==========
     qreal shadowMarginX = 8.0;
-    qreal shadowMarginY = 6.0;
     qreal actualCoverWidth = COVER_WIDTH - shadowMarginX;
     qreal coverHeight = actualCoverWidth * 4.0 / 3.0;
-    QRectF coverRect(itemRect.right() - COVER_WIDTH, itemRect.top(), COVER_WIDTH, itemRect.height());
-    QRectF actualCoverRect(coverRect.left(), coverRect.top(), actualCoverWidth, coverHeight);
+
+    QRectF coverRect;
+    QRectF actualCoverRect;
+    qreal textX;
+
+    if (imageOnRight) {
+        coverRect = QRectF(itemRect.right() - COVER_WIDTH, itemRect.top(), COVER_WIDTH, itemRect.height());
+        actualCoverRect = QRectF(coverRect.left(), coverRect.top(), actualCoverWidth, coverHeight);
+        textX = itemRect.left();
+    } else {
+        coverRect = QRectF(itemRect.left(), itemRect.top(), COVER_WIDTH, itemRect.height());
+        actualCoverRect = QRectF(coverRect.left(), coverRect.top(), actualCoverWidth, coverHeight);
+        textX = coverRect.right() + SPACING_TEXT_COVER_GAP;
+    }
+
     QPixmap cover;
     if (!book->coverImagePath().isEmpty()) {
         cover = ImageCache::instance().getPixmap(book->coverImagePath());
@@ -265,11 +287,8 @@ void MultiColumnLayout::drawBookItem(QPainter* painter, const BookPtr& book, con
     }
     PainterHelpers::drawBookCover3D(painter, scaledCover, actualCoverRect);
 
-    // ========== 左侧文字区 ==========
-    qreal textX = itemRect.left();
     qreal textY = itemRect.top();
 
-    // 书名：《》括起来，红色加粗
     QFont bookNameFont;
     bookNameFont.setPixelSize(FONT_BOOKNAME_SIZE);
     bookNameFont.setBold(true);
@@ -280,7 +299,6 @@ void MultiColumnLayout::drawBookItem(QPainter* painter, const BookPtr& book, con
     painter->drawText(QPointF(textX, textY + bookNameFm.ascent()), bookNameText);
     textY += bookNameFm.height() + SPACING_LINE_GAP;
 
-    // 书号+定价：灰色小字
     QFont smallFont;
     smallFont.setPixelSize(FONT_SMALL_SIZE);
     QFontMetrics smallFm(smallFont);
@@ -291,7 +309,6 @@ void MultiColumnLayout::drawBookItem(QPainter* painter, const BookPtr& book, con
     painter->drawText(QPointF(textX, textY + smallFm.ascent()), infoText);
     textY += smallFm.height() + SPACING_LINE_GAP;
 
-    // 内容简介标签+正文
     QFont descLabelFont;
     descLabelFont.setPixelSize(FONT_SMALL_SIZE);
     descLabelFont.setBold(true);
@@ -302,14 +319,12 @@ void MultiColumnLayout::drawBookItem(QPainter* painter, const BookPtr& book, con
     qreal labelWidth = descLabelFm.boundingRect(introLabel).width();
     painter->drawText(QPointF(textX, textY + descLabelFm.ascent()), introLabel);
 
-    // 正文：黑色，常规字重，自动换行
     QFont descFont;
     descFont.setPixelSize(FONT_SMALL_SIZE);
     painter->setFont(descFont);
     painter->setPen(COLOR_TEXT_BLACK);
 
     if (!book->description().isEmpty()) {
-        // 使用QTextLayout手动处理换行，实现第一行在标签右侧，后续行左对齐
         QString descText = book->description();
         QStringList paragraphs = descText.split(QLatin1Char('\n'));
         qreal drawY = textY;
@@ -367,38 +382,61 @@ QList<PageElementPtr> MultiColumnLayout::generateElements(int pageIndex, const Q
     QRectF contentRect = pageRect.marginsRemoved(
         QMarginsF(PAGE_MARGIN, PAGE_MARGIN, PAGE_MARGIN, PAGE_MARGIN));
     qreal currentY = contentRect.top();
-    int zOrder = 0;  // 层级计数器，从下到上递增
+    int zOrder = 0;
 
-    // ========== 1. 顶部橙红色横幅 ==========
+    int booksOnPreviousPages = 0;
+    for (int p = 0; p < pageIndex; ++p) {
+        booksOnPreviousPages += m_pages.at(p).size();
+    }
+
+    // ========== 1. 顶部橙红色弧形横幅 ==========
     QRectF bannerRect(contentRect.left(), currentY, contentRect.width(), BANNER_HEIGHT);
 
-    // 横幅背景（渐变圆角矩形）
     {
+        qreal bannerWidth = bannerRect.width() * 0.68;
+        qreal bannerLeft = bannerRect.right() - bannerWidth;
+        QRectF pathRect(bannerLeft, bannerRect.top(), bannerWidth, bannerRect.height());
+
+        QPainterPath path;
+        path.moveTo(pathRect.topRight());
+        path.lineTo(pathRect.bottomRight());
+        path.lineTo(pathRect.bottomLeft());
+        QPointF ctrlPoint(pathRect.left() - 30.0, pathRect.center().y());
+        QPointF endPoint(pathRect.topLeft());
+        path.quadTo(ctrlPoint, endPoint);
+        path.closeSubpath();
+
         ShapeElementPtr shape(new ShapeElementData());
-        shape->setShapeType(ShapeElementData::RoundedRect);
+        shape->setShapeType(ShapeElementData::Path);
         shape->setFillColor(COLOR_BANNER_ORANGE);
         shape->setHasFill(true);
         shape->setGradientColor(COLOR_BANNER_ORANGE.lighter(110));
         shape->setHasGradient(true);
-        shape->setCornerRadius(CORNER_RADIUS);
         shape->setHasBorder(false);
+        shape->setPainterPath(path);
         shape->setRect(bannerRect);
         shape->setName(QString::fromUtf8("横幅"));
         shape->setZOrder(zOrder++);
         elements.append(PageElementPtr(shape.data()));
     }
 
-    // 横幅标题文字
     {
-        TextElementPtr text(new TextElementData());
-        text->setText(QString::fromUtf8("大众类重点推荐图书"));
         QFont font;
         font.setPixelSize(FONT_TITLE_SIZE);
         font.setBold(true);
+        QFontMetrics fm(font);
+        QString title = QString::fromUtf8("大众类重点推荐图书");
+        QRectF textRect = fm.boundingRect(title);
+        qreal rightMargin = 20.0;
+        qreal textX = bannerRect.right() - rightMargin - textRect.width();
+        qreal textY = bannerRect.y() + (bannerRect.height() - textRect.height()) / 2.0;
+
+        TextElementPtr text(new TextElementData());
+        text->setText(title);
         text->setFont(font);
         text->setTextColor(COLOR_WHITE);
-        text->setAlignment(Qt::AlignCenter);
-        text->setRect(bannerRect);
+        text->setAlignment(Qt::AlignLeft | Qt::AlignTop);
+        text->setRect(QRectF(textX, textY, textRect.width(), textRect.height()));
         text->setName(QString::fromUtf8("横幅标题"));
         text->setZOrder(zOrder++);
         elements.append(PageElementPtr(text.data()));
@@ -413,14 +451,14 @@ QList<PageElementPtr> MultiColumnLayout::generateElements(int pageIndex, const Q
         qreal itemHeight = pageHeights.at(i);
         QRectF itemRect(contentRect.left(), currentY, contentRect.width(), itemHeight);
 
-        // 生成单本书条目的元素
-        generateBookItemElements(elements, zOrder, book, itemRect, &tempPainter);
+        int globalBookIndex = booksOnPreviousPages + i;
+        bool imageOnRight = (globalBookIndex % 2 == 0);
+
+        generateBookItemElements(elements, zOrder, book, itemRect, &tempPainter, imageOnRight);
         currentY += itemHeight;
 
-        // 分隔线（最后一本书不画）
         if (i < pageBooks.size() - 1) {
             currentY += DIVIDER_SPACING;
-            // 分隔线ShapeElement
             {
                 ShapeElementPtr divider(new ShapeElementData());
                 divider->setShapeType(ShapeElementData::Line);
@@ -442,7 +480,7 @@ QList<PageElementPtr> MultiColumnLayout::generateElements(int pageIndex, const Q
     // ========== 3. 页码 ==========
     {
         TextElementPtr text(new TextElementData());
-        text->setText(QString::fromUtf8("第%1页").arg(pageIndex + 1));
+        text->setText(QString::fromUtf8("%1").arg(pageIndex + 1));
         QFont font;
         font.setPixelSize(FONT_SMALL_SIZE);
         text->setFont(font);
@@ -515,18 +553,27 @@ qreal MultiColumnLayout::calculateDescHeight(QPainter* painter, const BookPtr& b
 // ============================================================
 void MultiColumnLayout::generateBookItemElements(
     QList<PageElementPtr>& elements, int& zOrder,
-    const BookPtr& book, const QRectF& itemRect, QPainter* tempPainter)
+    const BookPtr& book, const QRectF& itemRect, QPainter* tempPainter, bool imageOnRight)
 {
     qreal textWidth = itemRect.width() - COVER_WIDTH - SPACING_TEXT_COVER_GAP;
-
-    // ========== 右侧封面 ==========
     qreal shadowMarginX = 8.0;
     qreal actualCoverWidth = COVER_WIDTH - shadowMarginX;
     qreal coverHeight = actualCoverWidth * 4.0 / 3.0;
-    QRectF coverRect(itemRect.right() - COVER_WIDTH, itemRect.top(), COVER_WIDTH, itemRect.height());
-    QRectF actualCoverRect(coverRect.left(), coverRect.top(), actualCoverWidth, coverHeight);
 
-    // 封面图片元素
+    QRectF coverRect;
+    QRectF actualCoverRect;
+    qreal textX;
+
+    if (imageOnRight) {
+        coverRect = QRectF(itemRect.right() - COVER_WIDTH, itemRect.top(), COVER_WIDTH, itemRect.height());
+        actualCoverRect = QRectF(coverRect.left(), coverRect.top(), actualCoverWidth, coverHeight);
+        textX = itemRect.left();
+    } else {
+        coverRect = QRectF(itemRect.left(), itemRect.top(), COVER_WIDTH, itemRect.height());
+        actualCoverRect = QRectF(coverRect.left(), coverRect.top(), actualCoverWidth, coverHeight);
+        textX = coverRect.right() + SPACING_TEXT_COVER_GAP;
+    }
+
     {
         ImageElementPtr image(new ImageElementData());
         image->setImagePath(book->coverImagePath());
@@ -539,11 +586,8 @@ void MultiColumnLayout::generateBookItemElements(
         elements.append(PageElementPtr(image.data()));
     }
 
-    // ========== 左侧文字区 ==========
-    qreal textX = itemRect.left();
     qreal textY = itemRect.top();
 
-    // 书名：《》括起来，红色加粗
     QFont bookNameFont;
     bookNameFont.setPixelSize(FONT_BOOKNAME_SIZE);
     bookNameFont.setBold(true);
@@ -562,7 +606,6 @@ void MultiColumnLayout::generateBookItemElements(
     }
     textY += bookNameFm.height() + SPACING_LINE_GAP;
 
-    // 书号+定价：灰色小字
     QFont smallFont;
     smallFont.setPixelSize(FONT_SMALL_SIZE);
     QFontMetrics smallFm(smallFont);
@@ -581,7 +624,6 @@ void MultiColumnLayout::generateBookItemElements(
     }
     textY += smallFm.height() + SPACING_LINE_GAP;
 
-    // 内容简介标签
     QFont descLabelFont;
     descLabelFont.setPixelSize(FONT_SMALL_SIZE);
     descLabelFont.setBold(true);
@@ -589,10 +631,8 @@ void MultiColumnLayout::generateBookItemElements(
     QString introLabel = QString::fromUtf8("内容简介：");
     qreal labelWidth = descLabelFm.boundingRect(introLabel).width();
 
-    // 计算内容简介正文高度
     qreal descHeight = calculateDescHeight(tempPainter, book, textWidth, labelWidth);
 
-    // 内容简介标签元素
     {
         TextElementPtr text(new TextElementData());
         text->setText(introLabel);
@@ -605,9 +645,6 @@ void MultiColumnLayout::generateBookItemElements(
         elements.append(PageElementPtr(text.data()));
     }
 
-    // 内容简介正文元素
-    // 注意：renderPage中第一行在标签右侧（hanging indent），
-    // 后续行左对齐。此处用完整文字区域rect表示，渲染器需处理首行缩进。
     {
         TextElementPtr text(new TextElementData());
         text->setText(book->description());
@@ -617,7 +654,6 @@ void MultiColumnLayout::generateBookItemElements(
         text->setTextColor(COLOR_TEXT_BLACK);
         text->setAlignment(Qt::AlignLeft | Qt::AlignTop);
         text->setLineHeight(DESC_LINE_HEIGHT);
-        // 正文区域：从标签右侧开始（首行），到文字区右边界，高度为descHeight
         text->setRect(QRectF(textX, textY, textWidth, descHeight));
         text->setName(QString::fromUtf8("内容简介正文"));
         text->setZOrder(zOrder++);

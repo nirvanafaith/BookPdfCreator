@@ -84,8 +84,8 @@ private:
     QGroupBox* m_imageGroup;
     QSlider* m_opacitySlider;
     QSlider* m_scaleSlider;
-    QLabel* m_opacityValue;           // 显示不透明度百分比
-    QLabel* m_scaleValue;             // 显示缩放百分比
+    QSpinBox* m_opacityValue;         // 不透明度百分比输入
+    QSpinBox* m_scaleValue;           // 缩放百分比输入
 
     // ---- 提示标签（无选中时显示） ----
     QLabel* m_hintLabel;

@@ -2,6 +2,7 @@
 #include <QFontMetrics>
 #include <QImage>
 #include <QMarginsF>
+#include <QFile>
 #include <QtMath>
 
 // ========== 布局间距常量 ==========
@@ -62,7 +63,7 @@ void SingleColumnLayout::renderPage(QPainter* painter, int pageIndex, const QRec
 
     // ========== 2. 上半部分（封面+信息） ==========
     QRectF upperRect(contentRect.left(), currentY, contentRect.width(), UPPER_SECTION_HEIGHT);
-    qreal coverWidth = upperRect.width() / 3.0;
+    qreal coverWidth = upperRect.width() * 0.35;
 
     // 左侧封面区域
     QRectF coverRect(upperRect.left(), upperRect.top(), coverWidth, upperRect.height());
@@ -138,23 +139,71 @@ void SingleColumnLayout::renderPage(QPainter* painter, int pageIndex, const QRec
                                     static_cast<int>(BODY_LINE_HEIGHT));
     currentY += introHeight + SPACING_UPPER_BOTTOM;
 
-    // ========== 4. 底部区域（样章/二维码） ==========
+    // ========== 4. 底部区域（样章/目录/二维码） ==========
     QRectF bottomRect(contentRect.left(), currentY,
                       contentRect.width(), contentRect.bottom() - currentY);
     bool hasSample = book->hasSampleImages();
     bool hasQr = book->hasQrCodes();
 
-    if (hasSample && hasQr) {
-        qreal halfWidth = (bottomRect.width() - SPACING_BOTTOM_GAP) / 2.0;
-        QRectF sampleRect(bottomRect.left(), bottomRect.top(), halfWidth, bottomRect.height());
-        QRectF qrRect(bottomRect.left() + halfWidth + SPACING_BOTTOM_GAP,
-                      bottomRect.top(), halfWidth, bottomRect.height());
-        drawImageSection(painter, sampleRect, QString::fromUtf8("样章："), book->sampleImages());
-        drawImageSection(painter, qrRect, QString::fromUtf8("二维码："), book->qrCodes());
-    } else if (hasSample) {
-        drawImageSection(painter, bottomRect, QString::fromUtf8("样章："), book->sampleImages());
-    } else if (hasQr) {
-        drawImageSection(painter, bottomRect, QString::fromUtf8("二维码："), book->qrCodes());
+    // 读取目录文件
+    QStringList chapterList;
+    if (book->hasTxtFiles()) {
+        QString txtPath = book->txtFiles().first();
+        QFile file(txtPath);
+        if (file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+            QByteArray rawData = file.readAll();
+            file.close();
+            QString content = QString::fromUtf8(rawData);
+            QStringList lines = content.split('\n');
+            for (const QString& line : lines) {
+                QString trimmed = line.trimmed();
+                if (!trimmed.isEmpty()) {
+                    chapterList.append(trimmed);
+                }
+            }
+        }
+    }
+    bool hasToc = !chapterList.isEmpty();
+
+    if (hasSample) {
+        if (hasToc || hasQr) {
+            qreal sampleHeight = bottomRect.height() * 0.6;
+            qreal bottomBarHeight = bottomRect.height() - sampleHeight - SPACING_BOTTOM_GAP;
+            QRectF sampleRect(bottomRect.left(), bottomRect.top(),
+                              bottomRect.width(), sampleHeight);
+            drawImageSection(painter, sampleRect, QString::fromUtf8("样 章："), book->sampleImages());
+
+            qreal barY = bottomRect.top() + sampleHeight + SPACING_BOTTOM_GAP;
+            if (hasToc && hasQr) {
+                qreal halfWidth = (bottomRect.width() - SPACING_BOTTOM_GAP) / 2.0;
+                QRectF tocRect(bottomRect.left(), barY, halfWidth, bottomBarHeight);
+                QRectF qrRect(bottomRect.left() + halfWidth + SPACING_BOTTOM_GAP,
+                              barY, halfWidth, bottomBarHeight);
+                drawTocSection(painter, tocRect, chapterList);
+                drawImageSection(painter, qrRect, QString::fromUtf8("二维码："), book->qrCodes());
+            } else if (hasToc) {
+                QRectF tocRect(bottomRect.left(), barY, bottomRect.width(), bottomBarHeight);
+                drawTocSection(painter, tocRect, chapterList);
+            } else {
+                QRectF qrRect(bottomRect.left(), barY, bottomRect.width(), bottomBarHeight);
+                drawImageSection(painter, qrRect, QString::fromUtf8("二维码："), book->qrCodes());
+            }
+        } else {
+            drawImageSection(painter, bottomRect, QString::fromUtf8("样 章："), book->sampleImages());
+        }
+    } else {
+        if (hasToc && hasQr) {
+            qreal halfWidth = (bottomRect.width() - SPACING_BOTTOM_GAP) / 2.0;
+            QRectF tocRect(bottomRect.left(), bottomRect.top(), halfWidth, bottomRect.height());
+            QRectF qrRect(bottomRect.left() + halfWidth + SPACING_BOTTOM_GAP,
+                          bottomRect.top(), halfWidth, bottomRect.height());
+            drawTocSection(painter, tocRect, chapterList);
+            drawImageSection(painter, qrRect, QString::fromUtf8("二维码："), book->qrCodes());
+        } else if (hasToc) {
+            drawTocSection(painter, bottomRect, chapterList);
+        } else if (hasQr) {
+            drawImageSection(painter, bottomRect, QString::fromUtf8("二维码："), book->qrCodes());
+        }
     }
 
     QFont pageNumFont;
@@ -162,7 +211,7 @@ void SingleColumnLayout::renderPage(QPainter* painter, int pageIndex, const QRec
     painter->setFont(pageNumFont);
     painter->setPen(QColor(128, 128, 128));
     QRectF pageNumRect(pageRect.right() - 80, pageRect.bottom() - 30, 70, 20);
-    QString pageNumText = QString::fromUtf8("第%1页").arg(pageIndex + 1);
+    QString pageNumText = QString::fromUtf8("%1").arg(pageIndex + 1);
     painter->drawText(pageNumRect, Qt::AlignCenter, pageNumText);
 }
 
@@ -186,6 +235,43 @@ void SingleColumnLayout::drawImageSection(QPainter* painter, const QRectF& rect,
     QRectF imageRect(rect.left(), rect.top() + titleHeight + SPACING_IMAGE_TITLE,
                      rect.width(), rect.height() - titleHeight - SPACING_IMAGE_TITLE);
     drawImagesInRect(painter, imageRect, imagePaths);
+}
+
+void SingleColumnLayout::drawTocSection(QPainter* painter, const QRectF& rect,
+                                         const QStringList& chapterList)
+{
+    if (chapterList.isEmpty()) {
+        return;
+    }
+
+    QFont titleFont;
+    titleFont.setPixelSize(FONT_LABEL_SIZE);
+    titleFont.setBold(true);
+    QFontMetrics titleFm(titleFont);
+
+    painter->setFont(titleFont);
+    painter->setPen(COLOR_LABEL_RED);
+    painter->drawText(QPointF(rect.left(), rect.top() + titleFm.ascent()),
+                      QString::fromUtf8("目 录："));
+
+    qreal titleHeight = titleFm.height();
+    qreal contentTop = rect.top() + titleHeight + SPACING_IMAGE_TITLE;
+    qreal contentHeight = rect.bottom() - contentTop;
+
+    QFont bodyFont;
+    bodyFont.setPixelSize(FONT_BODY_SIZE);
+    QFontMetrics bodyFm(bodyFont);
+    qreal lineHeight = BODY_LINE_HEIGHT;
+
+    int maxLines = static_cast<int>(contentHeight / lineHeight);
+    int displayCount = qMin(chapterList.size(), maxLines);
+
+    painter->setFont(bodyFont);
+    painter->setPen(COLOR_TEXT_BLACK);
+    for (int i = 0; i < displayCount; ++i) {
+        qreal y = contentTop + i * lineHeight + bodyFm.ascent();
+        painter->drawText(QPointF(rect.left(), y), chapterList.at(i));
+    }
 }
 
 void SingleColumnLayout::drawImagesInRect(QPainter* painter, const QRectF& rect,
@@ -297,7 +383,7 @@ QList<PageElementPtr> SingleColumnLayout::generateElements(int pageIndex, const 
 
     // ========== 2. 上半部分（封面+信息） ==========
     QRectF upperRect(contentRect.left(), currentY, contentRect.width(), UPPER_SECTION_HEIGHT);
-    qreal coverWidth = upperRect.width() / 3.0;
+    qreal coverWidth = upperRect.width() * 0.35;
     QRectF coverRect(upperRect.left(), upperRect.top(), coverWidth, upperRect.height());
 
     // 封面图片
@@ -456,33 +542,83 @@ QList<PageElementPtr> SingleColumnLayout::generateElements(int pageIndex, const 
 
     currentY += introHeight + SPACING_UPPER_BOTTOM;
 
-    // ========== 4. 底部区域（样章/二维码） ==========
+    // ========== 4. 底部区域（样章/目录/二维码） ==========
     QRectF bottomRect(contentRect.left(), currentY,
                       contentRect.width(), contentRect.bottom() - currentY);
     bool hasSample = book->hasSampleImages();
     bool hasQr = book->hasQrCodes();
 
-    if (hasSample && hasQr) {
-        qreal halfWidth = (bottomRect.width() - SPACING_BOTTOM_GAP) / 2.0;
-        QRectF sampleRect(bottomRect.left(), bottomRect.top(), halfWidth, bottomRect.height());
-        QRectF qrRect(bottomRect.left() + halfWidth + SPACING_BOTTOM_GAP,
-                      bottomRect.top(), halfWidth, bottomRect.height());
-        generateImageSectionElements(elements, zOrder, sampleRect,
-                                     QString::fromUtf8("样章："), book->sampleImages());
-        generateImageSectionElements(elements, zOrder, qrRect,
-                                     QString::fromUtf8("二维码："), book->qrCodes());
-    } else if (hasSample) {
-        generateImageSectionElements(elements, zOrder, bottomRect,
-                                     QString::fromUtf8("样章："), book->sampleImages());
-    } else if (hasQr) {
-        generateImageSectionElements(elements, zOrder, bottomRect,
-                                     QString::fromUtf8("二维码："), book->qrCodes());
+    // 读取目录文件
+    QStringList chapterList;
+    if (book->hasTxtFiles()) {
+        QString txtPath = book->txtFiles().first();
+        QFile file(txtPath);
+        if (file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+            QByteArray rawData = file.readAll();
+            file.close();
+            QString content = QString::fromUtf8(rawData);
+            QStringList lines = content.split('\n');
+            for (const QString& line : lines) {
+                QString trimmed = line.trimmed();
+                if (!trimmed.isEmpty()) {
+                    chapterList.append(trimmed);
+                }
+            }
+        }
+    }
+    bool hasToc = !chapterList.isEmpty();
+
+    if (hasSample) {
+        if (hasToc || hasQr) {
+            qreal sampleHeight = bottomRect.height() * 0.6;
+            qreal bottomBarHeight = bottomRect.height() - sampleHeight - SPACING_BOTTOM_GAP;
+            QRectF sampleRect(bottomRect.left(), bottomRect.top(),
+                              bottomRect.width(), sampleHeight);
+            generateImageSectionElements(elements, zOrder, sampleRect,
+                                         QString::fromUtf8("样 章："), book->sampleImages());
+
+            qreal barY = bottomRect.top() + sampleHeight + SPACING_BOTTOM_GAP;
+            if (hasToc && hasQr) {
+                qreal halfWidth = (bottomRect.width() - SPACING_BOTTOM_GAP) / 2.0;
+                QRectF tocRect(bottomRect.left(), barY, halfWidth, bottomBarHeight);
+                QRectF qrRect(bottomRect.left() + halfWidth + SPACING_BOTTOM_GAP,
+                              barY, halfWidth, bottomBarHeight);
+                generateTocSectionElements(elements, zOrder, tocRect, chapterList);
+                generateImageSectionElements(elements, zOrder, qrRect,
+                                             QString::fromUtf8("二维码："), book->qrCodes());
+            } else if (hasToc) {
+                QRectF tocRect(bottomRect.left(), barY, bottomRect.width(), bottomBarHeight);
+                generateTocSectionElements(elements, zOrder, tocRect, chapterList);
+            } else {
+                QRectF qrRect(bottomRect.left(), barY, bottomRect.width(), bottomBarHeight);
+                generateImageSectionElements(elements, zOrder, qrRect,
+                                             QString::fromUtf8("二维码："), book->qrCodes());
+            }
+        } else {
+            generateImageSectionElements(elements, zOrder, bottomRect,
+                                         QString::fromUtf8("样 章："), book->sampleImages());
+        }
+    } else {
+        if (hasToc && hasQr) {
+            qreal halfWidth = (bottomRect.width() - SPACING_BOTTOM_GAP) / 2.0;
+            QRectF tocRect(bottomRect.left(), bottomRect.top(), halfWidth, bottomRect.height());
+            QRectF qrRect(bottomRect.left() + halfWidth + SPACING_BOTTOM_GAP,
+                          bottomRect.top(), halfWidth, bottomRect.height());
+            generateTocSectionElements(elements, zOrder, tocRect, chapterList);
+            generateImageSectionElements(elements, zOrder, qrRect,
+                                         QString::fromUtf8("二维码："), book->qrCodes());
+        } else if (hasToc) {
+            generateTocSectionElements(elements, zOrder, bottomRect, chapterList);
+        } else if (hasQr) {
+            generateImageSectionElements(elements, zOrder, bottomRect,
+                                         QString::fromUtf8("二维码："), book->qrCodes());
+        }
     }
 
     // ========== 5. 页码 ==========
     {
         TextElementPtr text(new TextElementData());
-        text->setText(QString::fromUtf8("第%1页").arg(pageIndex + 1));
+        text->setText(QString::fromUtf8("%1").arg(pageIndex + 1));
         QFont font;
         font.setPixelSize(FONT_SMALL_SIZE);
         text->setFont(font);
@@ -581,5 +717,56 @@ void SingleColumnLayout::generateImageSectionElements(
         image->setName(title.trimmed() + QString::fromUtf8("图片%1").arg(i + 1));
         image->setZOrder(zOrder++);
         elements.append(PageElementPtr(image.data()));
+    }
+}
+
+void SingleColumnLayout::generateTocSectionElements(
+    QList<PageElementPtr>& elements, int& zOrder,
+    const QRectF& rect, const QStringList& chapterList)
+{
+    if (chapterList.isEmpty()) {
+        return;
+    }
+
+    QFont titleFont;
+    titleFont.setPixelSize(FONT_LABEL_SIZE);
+    titleFont.setBold(true);
+    QFontMetrics titleFm(titleFont);
+
+    {
+        TextElementPtr text(new TextElementData());
+        text->setText(QString::fromUtf8("目 录："));
+        text->setFont(titleFont);
+        text->setTextColor(COLOR_LABEL_RED);
+        text->setAlignment(Qt::AlignLeft | Qt::AlignTop);
+        text->setRect(QRectF(rect.left(), rect.top(),
+                             rect.width(), titleFm.height()));
+        text->setName(QString::fromUtf8("目录标题"));
+        text->setZOrder(zOrder++);
+        elements.append(PageElementPtr(text.data()));
+    }
+
+    qreal titleHeight = titleFm.height();
+    qreal contentTop = rect.top() + titleHeight + SPACING_IMAGE_TITLE;
+    qreal contentHeight = rect.bottom() - contentTop;
+
+    QFont bodyFont;
+    bodyFont.setPixelSize(FONT_BODY_SIZE);
+    qreal lineHeight = BODY_LINE_HEIGHT;
+
+    int maxLines = static_cast<int>(contentHeight / lineHeight);
+    int displayCount = qMin(chapterList.size(), maxLines);
+
+    for (int i = 0; i < displayCount; ++i) {
+        qreal y = contentTop + i * lineHeight;
+        TextElementPtr text(new TextElementData());
+        text->setText(chapterList.at(i));
+        text->setFont(bodyFont);
+        text->setTextColor(COLOR_TEXT_BLACK);
+        text->setAlignment(Qt::AlignLeft | Qt::AlignTop);
+        text->setRect(QRectF(rect.left(), y, rect.width(), lineHeight));
+        text->setName(QString::fromUtf8("目录项%1").arg(i + 1));
+        text->setZOrder(zOrder++);
+        elements.append(PageElementPtr(text.data()));
     }
 }

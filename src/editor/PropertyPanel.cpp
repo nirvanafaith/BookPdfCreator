@@ -6,6 +6,7 @@
 #include <QGroupBox>
 #include <QDoubleSpinBox>
 #include <QSpinBox>
+#include <QAbstractSpinBox>
 #include <QSlider>
 #include <QLabel>
 #include <QPushButton>
@@ -190,7 +191,7 @@ void PropertyPanel::setupUi()
     m_imageGroup = new QGroupBox(QStringLiteral("图片"), this);
     QFormLayout* imageLayout = new QFormLayout(m_imageGroup);
 
-    // 不透明度滑块：0-100，显示百分比
+    // 不透明度滑块：0-100，百分比
     QWidget* opacityWidget = new QWidget(m_imageGroup);
     QHBoxLayout* opacityLayout = new QHBoxLayout(opacityWidget);
     opacityLayout->setContentsMargins(0, 0, 0, 0);
@@ -199,15 +200,19 @@ void PropertyPanel::setupUi()
     m_opacitySlider = new QSlider(Qt::Horizontal, opacityWidget);
     m_opacitySlider->setRange(0, 100);
     m_opacitySlider->setValue(100);
-    m_opacityValue = new QLabel(QStringLiteral("100%"), opacityWidget);
-    m_opacityValue->setMinimumWidth(40);
+    m_opacityValue = new QSpinBox(opacityWidget);
+    m_opacityValue->setRange(0, 100);
+    m_opacityValue->setValue(100);
+    m_opacityValue->setSuffix(QStringLiteral("%"));
+    m_opacityValue->setFixedWidth(55);
+    m_opacityValue->setButtonSymbols(QAbstractSpinBox::NoButtons);
     m_opacityValue->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
 
     opacityLayout->addWidget(m_opacitySlider);
     opacityLayout->addWidget(m_opacityValue);
     imageLayout->addRow(QStringLiteral("不透明度:"), opacityWidget);
 
-    // 缩放滑块：10-500，显示百分比
+    // 缩放滑块：10-500，百分比
     QWidget* scaleWidget = new QWidget(m_imageGroup);
     QHBoxLayout* scaleLayout = new QHBoxLayout(scaleWidget);
     scaleLayout->setContentsMargins(0, 0, 0, 0);
@@ -216,8 +221,12 @@ void PropertyPanel::setupUi()
     m_scaleSlider = new QSlider(Qt::Horizontal, scaleWidget);
     m_scaleSlider->setRange(10, 500);
     m_scaleSlider->setValue(100);
-    m_scaleValue = new QLabel(QStringLiteral("100%"), scaleWidget);
-    m_scaleValue->setMinimumWidth(40);
+    m_scaleValue = new QSpinBox(scaleWidget);
+    m_scaleValue->setRange(10, 500);
+    m_scaleValue->setValue(100);
+    m_scaleValue->setSuffix(QStringLiteral("%"));
+    m_scaleValue->setFixedWidth(55);
+    m_scaleValue->setButtonSymbols(QAbstractSpinBox::NoButtons);
     m_scaleValue->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
 
     scaleLayout->addWidget(m_scaleSlider);
@@ -314,15 +323,33 @@ void PropertyPanel::setupConnections()
 
     // ---- 图片属性：不透明度 ----
     connect(m_opacitySlider, &QSlider::valueChanged, this, [this](int value) {
-        m_opacityValue->setText(QString::number(value) + QStringLiteral("%"));
+        m_opacityValue->setValue(value);
         if (m_updating || m_currentElementId.isEmpty()) return;
+        emit opacityChanged(m_currentElementId, value / 100.0);
+    });
+
+    connect(m_opacityValue, &QSpinBox::editingFinished, this, [this]() {
+        if (m_updating || m_currentElementId.isEmpty()) return;
+        int value = m_opacityValue->value();
+        m_opacitySlider->blockSignals(true);
+        m_opacitySlider->setValue(value);
+        m_opacitySlider->blockSignals(false);
         emit opacityChanged(m_currentElementId, value / 100.0);
     });
 
     // ---- 图片属性：缩放 ----
     connect(m_scaleSlider, &QSlider::valueChanged, this, [this](int value) {
-        m_scaleValue->setText(QString::number(value) + QStringLiteral("%"));
+        m_scaleValue->setValue(value);
         if (m_updating || m_currentElementId.isEmpty()) return;
+        emit scaleFactorChanged(m_currentElementId, value / 100.0);
+    });
+
+    connect(m_scaleValue, &QSpinBox::editingFinished, this, [this]() {
+        if (m_updating || m_currentElementId.isEmpty()) return;
+        int value = m_scaleValue->value();
+        m_scaleSlider->blockSignals(true);
+        m_scaleSlider->setValue(value);
+        m_scaleSlider->blockSignals(false);
         emit scaleFactorChanged(m_currentElementId, value / 100.0);
     });
 }
@@ -401,13 +428,13 @@ void PropertyPanel::showElementProperties(const PageElementPtr& element)
         int opacityPercent = qRound(imageElem->opacity() * 100.0);
         opacityPercent = qBound(0, opacityPercent, 100);
         m_opacitySlider->setValue(opacityPercent);
-        m_opacityValue->setText(QString::number(opacityPercent) + QStringLiteral("%"));
+        m_opacityValue->setValue(opacityPercent);
 
         // 缩放：scaleFactor → 百分比
         int scalePercent = qRound(imageElem->scaleFactor() * 100.0);
         scalePercent = qBound(10, scalePercent, 500);
         m_scaleSlider->setValue(scalePercent);
-        m_scaleValue->setText(QString::number(scalePercent) + QStringLiteral("%"));
+        m_scaleValue->setValue(scalePercent);
     }
 
     // ---- 显示属性组，隐藏提示 ----

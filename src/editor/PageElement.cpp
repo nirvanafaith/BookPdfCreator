@@ -491,6 +491,7 @@ ShapeElementData::ShapeElementData()
     , m_borderWidth(1.0)
     , m_hasBorder(true)
     , m_cornerRadius(5.0)                  // 默认圆角半径
+    , m_path()
 {
     m_type = Shape;
 }
@@ -506,6 +507,7 @@ ShapeElementData::ShapeElementData(const ShapeElementData& other)
     , m_borderWidth(other.m_borderWidth)
     , m_hasBorder(other.m_hasBorder)
     , m_cornerRadius(other.m_cornerRadius)
+    , m_path(other.m_path)
 {
 }
 
@@ -597,6 +599,16 @@ qreal ShapeElementData::cornerRadius() const
 void ShapeElementData::setCornerRadius(qreal radius)
 {
     m_cornerRadius = radius;
+}
+
+QPainterPath ShapeElementData::painterPath() const
+{
+    return m_path;
+}
+
+void ShapeElementData::setPainterPath(const QPainterPath& path)
+{
+    m_path = path;
 }
 
 QJsonObject ShapeElementData::toJson() const

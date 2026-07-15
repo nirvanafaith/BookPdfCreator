@@ -9,6 +9,7 @@
 #include <QLinearGradient>
 #include <QBrush>
 #include <QPen>
+#include <QPainterPath>
 #include <QtGlobal>
 
 // ============================================================
@@ -290,6 +291,9 @@ void ElementRenderer::renderShape(QPainter* painter, const ShapeElementData* sha
         break;
     case ShapeElementData::Ellipse:
         painter->drawEllipse(rect);
+        break;
+    case ShapeElementData::Path:
+        painter->drawPath(shape->painterPath());
         break;
     }
 

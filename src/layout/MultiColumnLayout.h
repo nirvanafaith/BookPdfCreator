@@ -31,16 +31,16 @@ public:
 
 private:
     // 计算单本书条目所需高度
-    qreal calculateBookItemHeight(QPainter* painter, const BookPtr& book, qreal contentWidth);
+    qreal calculateBookItemHeight(QPainter* painter, const BookPtr& book, qreal contentWidth, bool imageOnRight);
 
     // 绘制单本书条目
-    void drawBookItem(QPainter* painter, const BookPtr& book, const QRectF& itemRect);
+    void drawBookItem(QPainter* painter, const BookPtr& book, const QRectF& itemRect, bool imageOnRight);
 
     // 生成单本书条目的页面元素
     // 对应drawBookItem的元素生成版本
     void generateBookItemElements(QList<PageElementPtr>& elements, int& zOrder,
                                   const BookPtr& book, const QRectF& itemRect,
-                                  QPainter* tempPainter);
+                                  QPainter* tempPainter, bool imageOnRight);
 
     // 计算内容简介正文高度（用于元素rect计算）
     qreal calculateDescHeight(QPainter* painter, const BookPtr& book, qreal textWidth, qreal labelWidth);
