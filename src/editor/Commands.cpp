@@ -342,6 +342,8 @@ void AddCommand::redo()
     BaseEditorItem* item = createItemForElement(m_element);
     if (item) {
         m_scene->addItem(item);
+        // 清除旧选中，确保添加新元素时之前的元素被选中关系终止
+        m_scene->clearSelection();
         // 选中新添加的元素，提供视觉反馈
         item->setSelected(true);
     }

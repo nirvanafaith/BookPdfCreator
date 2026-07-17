@@ -514,6 +514,23 @@ void EditorScene::mouseMoveEvent(QGraphicsSceneMouseEvent* event)
         // 计算位移增量
         QPointF delta = pos - m_dragStartPos;
 
+        // 拖拽阈值：未达到阈值时不触发移动（避免误触和抖动）
+        if (!m_dragThresholdMet) {
+            if (delta.manhattanLength() < 3.0) {
+                break;  // 未达阈值，不移动
+            }
+            m_dragThresholdMet = true;
+        }
+
+        // Shift 约束移动：锁定水平或垂直方向（以位移较大的方向为准）
+        if (event->modifiers() & Qt::ShiftModifier) {
+            if (qAbs(delta.x()) >= qAbs(delta.y())) {
+                delta.setY(0);  // 水平移动
+            } else {
+                delta.setX(0);  // 垂直移动
+            }
+        }
+
         // 启用吸附时，以选中元素联合包围盒为整体计算SnapGuide吸附偏移
         // （保证多选时各元素相对位置不变，整体对齐参考线）
         if (m_snapEnabled && !m_initialPositions.isEmpty()) {
@@ -677,10 +694,13 @@ void EditorScene::mouseMoveEvent(QGraphicsSceneMouseEvent* event)
         updateSelectionDecorator();
         break;
     }
-    case None:
+    case None: {
+        // hover 光标反馈
+        updateHoverCursor(pos);
         // 无拖拽操作，交给基类处理（悬停等）
         QGraphicsScene::mouseMoveEvent(event);
         return;
+    }
     }
 
     event->accept();
@@ -789,10 +809,12 @@ void EditorScene::mouseReleaseEvent(QGraphicsSceneMouseEvent* event)
                 QList<ResizeInfo> resizeInfos;
                 for (BaseEditorItem* item : selected) {
                     QRectF initRect = m_initialRects.value(item);
-                    // 相对联合包围盒缩放
-                    qreal newX = initialUnion.left()
+                    // 相对联合包围盒缩放：以 newUnion.topLeft 为锚点，
+                    // 各元素相对 initialUnion.topLeft 的偏移按 scaleX/scaleY 缩放后平移到 newUnion.topLeft。
+                    // 与 mouseMoveEvent 第616-617行使用相同基准点，确保松手后位置与拖动过程中一致，不回跳。
+                    qreal newX = newUnion.left()
                                  + (initRect.left() - initialUnion.left()) * scaleX;
-                    qreal newY = initialUnion.top()
+                    qreal newY = newUnion.top()
                                  + (initRect.top() - initialUnion.top()) * scaleY;
                     qreal newW = initRect.width() * scaleX;
                     qreal newH = initRect.height() * scaleY;
@@ -966,6 +988,50 @@ void EditorScene::keyPressEvent(QKeyEvent* event)
     if (focusItem()) {
         QGraphicsScene::keyPressEvent(event);
         return;
+    }
+
+    // 工具快捷键（仅无修饰键时响应，避免与Ctrl+V/Ctrl+Z等冲突）
+    if (event->modifiers() == Qt::NoModifier) {
+        switch (event->key()) {
+        case Qt::Key_V:
+            setCurrentTool(ToolSelect);
+            event->accept();
+            return;
+        case Qt::Key_R:
+            setCurrentTool(ToolRectangle);
+            event->accept();
+            return;
+        case Qt::Key_O:
+            setCurrentTool(ToolEllipse);
+            event->accept();
+            return;
+        case Qt::Key_L:
+            setCurrentTool(ToolLine);
+            event->accept();
+            return;
+        case Qt::Key_U:
+            setCurrentTool(ToolRoundedRect);
+            event->accept();
+            return;
+        case Qt::Key_B:
+            setCurrentTool(ToolBrush);
+            event->accept();
+            return;
+        case Qt::Key_G:
+            setCurrentTool(ToolPaintBucket);
+            event->accept();
+            return;
+        case Qt::Key_I:
+            setCurrentTool(ToolEyedropper);
+            event->accept();
+            return;
+        case Qt::Key_T:
+            setCurrentTool(ToolText);
+            event->accept();
+            return;
+        default:
+            break;
+        }
     }
 
     const QList<BaseEditorItem*> selected = selectedEditorItems();
@@ -1317,6 +1383,65 @@ HandlePosition EditorScene::handleAt(const QPointF& pos) const
 }
 
 // ============================================================
+// updateHoverCursor - 根据场景位置更新视图光标
+//
+// 悬停在选中装饰器手柄上时显示对应方向的缩放/旋转光标，
+// 悬停在选中元素上时显示移动光标，否则恢复箭头光标。
+// 使用EditorScene::handleAt（返回HandlePosition）做hit-test。
+// ============================================================
+void EditorScene::updateHoverCursor(const QPointF& scenePos)
+{
+    Qt::CursorShape cursor = Qt::ArrowCursor;
+
+    // 检查是否悬停在选中装饰器的手柄上
+    if (m_selectionDecorator && !selectedEditorItems().isEmpty()) {
+        HandlePosition handle = handleAt(scenePos);
+        if (static_cast<int>(handle) != INVALID_HANDLE) {
+            switch (handle) {
+            case TopLeft:
+            case BottomRight:
+                cursor = Qt::SizeFDiagCursor;
+                break;
+            case TopRight:
+            case BottomLeft:
+                cursor = Qt::SizeBDiagCursor;
+                break;
+            case Top:
+            case Bottom:
+                cursor = Qt::SizeVerCursor;
+                break;
+            case Left:
+            case Right:
+                cursor = Qt::SizeHorCursor;
+                break;
+            case Rotation:
+                cursor = Qt::CrossCursor;
+                break;
+            default:
+                break;
+            }
+        } else {
+            // 手柄区域外，检查是否在元素上
+            QGraphicsItem* item = itemAt(scenePos, QTransform());
+            if (item && item->isSelected()) {
+                cursor = Qt::SizeAllCursor;
+            }
+        }
+    } else {
+        // 无选中元素，检查是否悬停在元素上
+        QGraphicsItem* item = itemAt(scenePos, QTransform());
+        if (item && item->type() >= QGraphicsItem::UserType) {
+            cursor = Qt::SizeAllCursor;
+        }
+    }
+
+    // 设置视图光标
+    if (!views().isEmpty()) {
+        views().first()->setCursor(cursor);
+    }
+}
+
+// ============================================================
 // startMove - 开始移动操作
 //
 // 记录所有选中元素的初始位置，用于拖拽时计算增量。
@@ -1325,6 +1450,7 @@ void EditorScene::startMove(const QPointF& startPos)
 {
     m_dragMode = Move;
     m_dragStartPos = startPos;
+    m_dragThresholdMet = false;  // 重置拖拽阈值标志
 
     const QList<BaseEditorItem*> selected = selectedEditorItems();
     m_initialPositions.clear();

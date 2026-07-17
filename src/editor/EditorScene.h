@@ -147,6 +147,8 @@ private:
     BaseEditorItem* createItemForElement(const PageElementPtr& element);
     // 变换手柄hit-test：返回手柄位置，无手柄返回-1（强转为HandlePosition的负值）
     HandlePosition handleAt(const QPointF& pos) const;
+    // 根据场景位置更新视图光标（手柄/元素hover反馈）
+    void updateHoverCursor(const QPointF& scenePos);
     // 开始拖拽操作
     void startMove(const QPointF& startPos);
     void startResize(HandlePosition handle, const QPointF& startPos);
@@ -196,6 +198,7 @@ private:
     enum DragMode { None, Move, Resize, Rotate, RubberBand };
     DragMode m_dragMode;
     QPointF m_dragStartPos;
+    bool m_dragThresholdMet = false;  // 拖拽阈值标志：达到阈值后才触发移动
     HandlePosition m_resizeHandle;
     QMap<BaseEditorItem*, QPointF> m_initialPositions;   // 拖拽开始时各元素位置
     QMap<BaseEditorItem*, QRectF> m_initialRects;        // 拖拽开始时各元素矩形

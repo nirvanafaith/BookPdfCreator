@@ -18,6 +18,8 @@
 #include <QListWidgetItem>
 #include <QCoreApplication>
 #include <QPoint>
+#include <QApplication>
+#include <QMouseEvent>
 
 // ============================================================
 // FixedAssetWidget
@@ -144,7 +146,67 @@ void FixedAssetWidget::addImageAsset(const QString& filePath)
 }
 
 // ============================================================
-// 拖出：复用AssetMimeData机制
+// 手动触发拖拽：mousePressEvent + mouseMoveEvent
+// 防御性方案：不依赖 Qt 默认的 startDrag 触发机制，确保拖拽一定能启动
+// ============================================================
+void FixedAssetWidget::mousePressEvent(QMouseEvent* event)
+{
+    if (event->button() == Qt::LeftButton) {
+        m_dragStartPos = event->pos();
+        m_dragItem = currentItem();
+    }
+    QListWidget::mousePressEvent(event);  // 调用基类保持选中行为
+}
+
+void FixedAssetWidget::mouseMoveEvent(QMouseEvent* event)
+{
+    if (!(event->buttons() & Qt::LeftButton)) {
+        QListWidget::mouseMoveEvent(event);
+        return;
+    }
+    if (!m_dragItem) {
+        QListWidget::mouseMoveEvent(event);
+        return;
+    }
+    // 检查移动距离是否达到拖拽阈值
+    if ((event->pos() - m_dragStartPos).manhattanLength() < QApplication::startDragDistance()) {
+        QListWidget::mouseMoveEvent(event);
+        return;
+    }
+
+    // 达到阈值，手动启动拖拽
+    QString imagePath = m_dragItem->data(Qt::UserRole).toString();
+    if (imagePath.isEmpty()) {
+        m_dragItem = nullptr;
+        QListWidget::mouseMoveEvent(event);
+        return;
+    }
+
+    AssetMimeData* mimeData = new AssetMimeData;
+    mimeData->assetType = ImageAsset;
+    mimeData->imagePath = imagePath;
+    mimeData->setData("application/x-bookpdf-asset", QByteArray("asset"));
+
+    QDrag* drag = new QDrag(this);
+    drag->setMimeData(mimeData);
+
+    QIcon icon = m_dragItem->icon();
+    if (!icon.isNull()) {
+        QPixmap pix = icon.pixmap(iconSize());
+        if (!pix.isNull()) {
+            drag->setPixmap(pix);
+            drag->setHotSpot(QPoint(pix.width() / 2, pix.height() / 2));
+        }
+    }
+
+    // 清除 m_dragItem 避免重复触发
+    m_dragItem = nullptr;
+
+    drag->exec(Qt::CopyAction);
+}
+
+// ============================================================
+// 拖出：复用AssetMimeData机制（保留向后兼容）
 // ============================================================
 void FixedAssetWidget::startDrag(Qt::DropActions supportedActions)
 {

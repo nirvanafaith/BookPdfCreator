@@ -207,8 +207,9 @@ void ElementRenderer::renderImage(QPainter* painter, const ImageElementData* ima
         // 设置不透明度
         painter->setOpacity(image->opacity());
 
-        // 计算目标绘制区域
+        // 计算目标绘制区域和源裁剪区域
         QRectF targetRect;
+        QRectF sourceRect(0, 0, pixmap.width(), pixmap.height());
         qreal scaleFactor = image->scaleFactor();
 
         if (qAbs(scaleFactor - 1.0) > 0.001) {
@@ -216,25 +217,23 @@ void ElementRenderer::renderImage(QPainter* painter, const ImageElementData* ima
             QSizeF scaledSize(pixmap.width() * scaleFactor,
                               pixmap.height() * scaleFactor);
             targetRect.setSize(scaledSize);
+            targetRect.setTopLeft(rect.topLeft());
+        } else if (image->keepAspectRatio()) {
+            // contain 模式：保持宽高比缩放到 rect 内，居中留白
+            QSizeF pixmapSizeF(pixmap.size());
+            QSizeF scaledSize = pixmapSizeF.scaled(rect.size(), Qt::KeepAspectRatio);
+            qreal offsetX = (rect.width() - scaledSize.width()) / 2.0;
+            qreal offsetY = (rect.height() - scaledSize.height()) / 2.0;
+            targetRect = QRectF(rect.left() + offsetX, rect.top() + offsetY,
+                                scaledSize.width(), scaledSize.height());
+            // sourceRect 保持初始值（整张原图，不裁剪）
         } else {
-            // 适配到元素rect尺寸
-            if (image->keepAspectRatio()) {
-                // 保持宽高比：缩放到rect内并居中
-                QSizeF aspectSize = pixmap.size();
-                aspectSize.scale(rect.size(), Qt::KeepAspectRatio);
-                targetRect.setSize(aspectSize);
-            } else {
-                // 拉伸填充整个rect
-                targetRect.setSize(rect.size());
-            }
+            // 拉伸填充整个 rect
+            targetRect = rect;
         }
 
-        // 左上角对齐rect.topLeft，避免缩放时图像因居中偏移而跳跃
-        targetRect.setTopLeft(rect.topLeft());
-
-        // 绘制图片
-        painter->drawPixmap(targetRect, pixmap,
-                            QRectF(0, 0, pixmap.width(), pixmap.height()));
+        // 绘制图片（sourceRect 为裁剪区域，targetRect 为目标区域）
+        painter->drawPixmap(targetRect, pixmap, sourceRect);
     }
 
     painter->restore();

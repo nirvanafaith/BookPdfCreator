@@ -3,6 +3,8 @@
 
 #include <QListWidget>
 #include <QString>
+#include <QPoint>
+#include <QListWidgetItem>
 
 // ============================================================
 // 固定素材组件
@@ -32,10 +34,14 @@ protected:
     void dragLeaveEvent(QDragLeaveEvent* event) override;
     void dropEvent(QDropEvent* event) override;
     void paintEvent(QPaintEvent* event) override;
+    void mousePressEvent(QMouseEvent* event) override;
+    void mouseMoveEvent(QMouseEvent* event) override;
 
 private:
     QString m_assetsDir;   // 固定素材存储目录路径
     bool m_dragHighlight;  // 拖拽高亮标志
+    QPoint m_dragStartPos;       // 鼠标按下时的起始位置
+    QListWidgetItem* m_dragItem = nullptr;  // 待拖拽的列表项
 
     void setupUi();
     QString fixedAssetsDir() const;             // 获取固定素材目录路径

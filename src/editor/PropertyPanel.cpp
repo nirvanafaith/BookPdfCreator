@@ -92,33 +92,33 @@ void PropertyPanel::setupUi()
     m_transformGroup = new QGroupBox(QStringLiteral("变换"), this);
     QFormLayout* transformLayout = new QFormLayout(m_transformGroup);
 
-    // X坐标：范围-1000~1000，精度0.1，单位"点"
+    // X坐标：范围-5000~5000，精度0.1，单位"点"
     m_xSpin = new QDoubleSpinBox(m_transformGroup);
-    m_xSpin->setRange(-1000.0, 1000.0);
+    m_xSpin->setRange(-5000.0, 5000.0);
     m_xSpin->setDecimals(1);
     m_xSpin->setSingleStep(0.1);
     m_xSpin->setSuffix(QStringLiteral(" 点"));
     transformLayout->addRow(QStringLiteral("X:"), m_xSpin);
 
-    // Y坐标：范围-1000~1000，精度0.1，单位"点"
+    // Y坐标：范围-5000~5000，精度0.1，单位"点"
     m_ySpin = new QDoubleSpinBox(m_transformGroup);
-    m_ySpin->setRange(-1000.0, 1000.0);
+    m_ySpin->setRange(-5000.0, 5000.0);
     m_ySpin->setDecimals(1);
     m_ySpin->setSingleStep(0.1);
     m_ySpin->setSuffix(QStringLiteral(" 点"));
     transformLayout->addRow(QStringLiteral("Y:"), m_ySpin);
 
-    // 宽度：范围1~2000，精度0.1，单位"点"
+    // 宽度：范围1~5000，精度0.1，单位"点"
     m_wSpin = new QDoubleSpinBox(m_transformGroup);
-    m_wSpin->setRange(1.0, 2000.0);
+    m_wSpin->setRange(1.0, 5000.0);
     m_wSpin->setDecimals(1);
     m_wSpin->setSingleStep(0.1);
     m_wSpin->setSuffix(QStringLiteral(" 点"));
     transformLayout->addRow(QStringLiteral("宽:"), m_wSpin);
 
-    // 高度：范围1~2000，精度0.1，单位"点"
+    // 高度：范围1~5000，精度0.1，单位"点"
     m_hSpin = new QDoubleSpinBox(m_transformGroup);
-    m_hSpin->setRange(1.0, 2000.0);
+    m_hSpin->setRange(1.0, 5000.0);
     m_hSpin->setDecimals(1);
     m_hSpin->setSingleStep(0.1);
     m_hSpin->setSuffix(QStringLiteral(" 点"));

@@ -4,6 +4,7 @@
 #include <QObject>
 #include <QPixmap>
 #include <QCache>
+#include <QHash>
 #include <QSize>
 #include <QByteArray>
 #include <QMutex>
@@ -50,6 +51,9 @@ public:
     // 移除指定路径的缓存
     void removeCache(const QString &path);
 
+    // 获取图片原始尺寸（带缓存，不加载图片内容）
+    QSize getOriginalSize(const QString& path);
+
     // 获取占位图（加载失败时使用）
     QPixmap placeholderPixmap(const QSize &size = QSize(120, 160)) const;
 
@@ -71,6 +75,7 @@ private:
 
     mutable QMutex m_mutex;                  // 互斥锁（线程安全）
     QCache<QString, QPixmap> m_pixmapCache;  // 图片缓存
+    QHash<QString, QSize> m_sizeCache;       // 图片原始尺寸缓存
     int m_maxCacheSizeKb;                    // 最大缓存大小（KB）
 
     static const int DEFAULT_MAX_CACHE_KB = 102400; // 默认100MB

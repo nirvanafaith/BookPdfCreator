@@ -4,6 +4,8 @@
 #include <QMarginsF>
 #include <QFile>
 #include <QtMath>
+#include <QDebug>
+#include "parsers/ImageCache.h"
 
 // ========== 布局间距常量 ==========
 static const qreal SPACING_BANNER_BOTTOM = 20.0;    // 横幅下方间距
@@ -17,6 +19,36 @@ static const qreal BODY_LINE_HEIGHT = 16.0;         // 正文行高
 static const qreal SPACING_IMAGE_TITLE = 5.0;       // 图片标题下方间距
 static const qreal SPACING_BOTTOM_GAP = 10.0;       // 底部区域分栏间距
 static const qreal IMAGE_PADDING = 5.0;             // 图片间间距
+
+namespace {
+
+// 在原 rect 范围内居中放置按图片宽高比调整后的 rect
+QRectF adjustRectToAspect(const QRectF& srcRect, const QSize& imageSize)
+{
+    if (imageSize.isEmpty() || imageSize.width() <= 0 || imageSize.height() <= 0) {
+        return srcRect;  // 图片尺寸无效，返回原 rect
+    }
+
+    qreal imageAspect = static_cast<qreal>(imageSize.width()) / static_cast<qreal>(imageSize.height());
+    qreal rectAspect = srcRect.width() / srcRect.height();
+
+    qreal newW, newH;
+    if (imageAspect > rectAspect) {
+        // 图片更宽：保持宽度，调整高度
+        newW = srcRect.width();
+        newH = srcRect.width() / imageAspect;
+    } else {
+        // 图片更高：保持高度，调整宽度
+        newH = srcRect.height();
+        newW = srcRect.height() * imageAspect;
+    }
+
+    qreal offsetX = (srcRect.width() - newW) / 2.0;
+    qreal offsetY = (srcRect.height() - newH) / 2.0;
+    return QRectF(srcRect.left() + offsetX, srcRect.top() + offsetY, newW, newH);
+}
+
+} // namespace
 
 SingleColumnLayout::SingleColumnLayout()
     : m_pageCount(0)
@@ -390,8 +422,10 @@ QList<PageElementPtr> SingleColumnLayout::generateElements(int pageIndex, const 
     {
         ImageElementPtr image(new ImageElementData());
         image->setImagePath(book->coverImagePath());
-        image->setRect(coverRect);
-        image->setKeepAspectRatio(true);
+        QSize imgSize = ImageCache::instance().getOriginalSize(book->coverImagePath());
+        QRectF adjustedRect = adjustRectToAspect(coverRect, imgSize);
+        image->setRect(adjustedRect);
+        image->setKeepAspectRatio(!imgSize.isValid());  // 有效时 false（拉伸填充），无效时 true 回退
         image->setScaleFactor(1.0);
         image->setOpacity(1.0);
         image->setName(QString::fromUtf8("封面"));
@@ -545,6 +579,12 @@ QList<PageElementPtr> SingleColumnLayout::generateElements(int pageIndex, const 
     // ========== 4. 底部区域（样章/目录/二维码） ==========
     QRectF bottomRect(contentRect.left(), currentY,
                       contentRect.width(), contentRect.bottom() - currentY);
+    // 边界检查：若简介过长导致 bottomRect 高度不足，跳过底部元素生成
+    if (bottomRect.height() < 50) {
+        qWarning() << "SingleColumnLayout: bottomRect height too small, skip bottom elements:"
+                   << bottomRect.height();
+        return elements;
+    }
     bool hasSample = book->hasSampleImages();
     bool hasQr = book->hasQrCodes();
 
@@ -572,27 +612,38 @@ QList<PageElementPtr> SingleColumnLayout::generateElements(int pageIndex, const 
         if (hasToc || hasQr) {
             qreal sampleHeight = bottomRect.height() * 0.6;
             qreal bottomBarHeight = bottomRect.height() - sampleHeight - SPACING_BOTTOM_GAP;
+
+            // 边界检查：若 bottomBarHeight 不足，跳过目录和二维码，样章扩展到整个 bottomRect
+            if (bottomBarHeight < 30) {
+                qWarning() << "SingleColumnLayout: bottomBarHeight too small, skip toc/qr:"
+                           << bottomBarHeight;
+                sampleHeight = bottomRect.height();  // 样章扩展到整个高度
+                bottomBarHeight = 0;
+            }
+
             QRectF sampleRect(bottomRect.left(), bottomRect.top(),
                               bottomRect.width(), sampleHeight);
             generateImageSectionElements(elements, zOrder, sampleRect,
                                          QString::fromUtf8("样 章："), book->sampleImages());
 
-            qreal barY = bottomRect.top() + sampleHeight + SPACING_BOTTOM_GAP;
-            if (hasToc && hasQr) {
-                qreal halfWidth = (bottomRect.width() - SPACING_BOTTOM_GAP) / 2.0;
-                QRectF tocRect(bottomRect.left(), barY, halfWidth, bottomBarHeight);
-                QRectF qrRect(bottomRect.left() + halfWidth + SPACING_BOTTOM_GAP,
-                              barY, halfWidth, bottomBarHeight);
-                generateTocSectionElements(elements, zOrder, tocRect, chapterList);
-                generateImageSectionElements(elements, zOrder, qrRect,
-                                             QString::fromUtf8("二维码："), book->qrCodes());
-            } else if (hasToc) {
-                QRectF tocRect(bottomRect.left(), barY, bottomRect.width(), bottomBarHeight);
-                generateTocSectionElements(elements, zOrder, tocRect, chapterList);
-            } else {
-                QRectF qrRect(bottomRect.left(), barY, bottomRect.width(), bottomBarHeight);
-                generateImageSectionElements(elements, zOrder, qrRect,
-                                             QString::fromUtf8("二维码："), book->qrCodes());
+            if (bottomBarHeight >= 30) {
+                qreal barY = bottomRect.top() + sampleHeight + SPACING_BOTTOM_GAP;
+                if (hasToc && hasQr) {
+                    qreal halfWidth = (bottomRect.width() - SPACING_BOTTOM_GAP) / 2.0;
+                    QRectF tocRect(bottomRect.left(), barY, halfWidth, bottomBarHeight);
+                    QRectF qrRect(bottomRect.left() + halfWidth + SPACING_BOTTOM_GAP,
+                                  barY, halfWidth, bottomBarHeight);
+                    generateTocSectionElements(elements, zOrder, tocRect, chapterList);
+                    generateImageSectionElements(elements, zOrder, qrRect,
+                                                 QString::fromUtf8("二维码："), book->qrCodes());
+                } else if (hasToc) {
+                    QRectF tocRect(bottomRect.left(), barY, bottomRect.width(), bottomBarHeight);
+                    generateTocSectionElements(elements, zOrder, tocRect, chapterList);
+                } else {
+                    QRectF qrRect(bottomRect.left(), barY, bottomRect.width(), bottomBarHeight);
+                    generateImageSectionElements(elements, zOrder, qrRect,
+                                                 QString::fromUtf8("二维码："), book->qrCodes());
+                }
             }
         } else {
             generateImageSectionElements(elements, zOrder, bottomRect,
@@ -710,8 +761,10 @@ void SingleColumnLayout::generateImageSectionElements(
 
         ImageElementPtr image(new ImageElementData());
         image->setImagePath(imagePaths.at(i));
-        image->setRect(cellRect);
-        image->setKeepAspectRatio(true);
+        QSize imgSize = ImageCache::instance().getOriginalSize(imagePaths.at(i));
+        QRectF adjustedRect = adjustRectToAspect(cellRect, imgSize);
+        image->setRect(adjustedRect);
+        image->setKeepAspectRatio(!imgSize.isValid());  // 有效时 false（拉伸填充），无效时 true 回退
         image->setScaleFactor(1.0);
         image->setOpacity(1.0);
         image->setName(title.trimmed() + QString::fromUtf8("图片%1").arg(i + 1));

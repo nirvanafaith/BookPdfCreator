@@ -1,9 +1,38 @@
 #include "MultiColumnLayout.h"
+#include "parsers/ImageCache.h"
 #include <QFontMetrics>
 #include <QImage>
 #include <QMarginsF>
 #include <QTextLayout>
 #include <QtMath>
+
+namespace {
+// 在原 rect 范围内居中放置按图片宽高比调整后的 rect
+QRectF adjustRectToAspect(const QRectF& srcRect, const QSize& imageSize)
+{
+    if (imageSize.isEmpty() || imageSize.width() <= 0 || imageSize.height() <= 0) {
+        return srcRect;  // 图片尺寸无效，返回原 rect
+    }
+
+    qreal imageAspect = static_cast<qreal>(imageSize.width()) / static_cast<qreal>(imageSize.height());
+    qreal rectAspect = srcRect.width() / srcRect.height();
+
+    qreal newW, newH;
+    if (imageAspect > rectAspect) {
+        // 图片更宽：保持宽度，调整高度
+        newW = srcRect.width();
+        newH = srcRect.width() / imageAspect;
+    } else {
+        // 图片更高：保持高度，调整宽度
+        newH = srcRect.height();
+        newW = srcRect.height() * imageAspect;
+    }
+
+    qreal offsetX = (srcRect.width() - newW) / 2.0;
+    qreal offsetY = (srcRect.height() - newH) / 2.0;
+    return QRectF(srcRect.left() + offsetX, srcRect.top() + offsetY, newW, newH);
+}
+}  // namespace
 
 // ========== 布局间距常量 ==========
 const qreal MultiColumnLayout::SPACING_BANNER_BOTTOM = 15.0;  // 横幅下方间距
@@ -577,8 +606,10 @@ void MultiColumnLayout::generateBookItemElements(
     {
         ImageElementPtr image(new ImageElementData());
         image->setImagePath(book->coverImagePath());
-        image->setRect(actualCoverRect);
-        image->setKeepAspectRatio(true);
+        QSize imgSize = ImageCache::instance().getOriginalSize(book->coverImagePath());
+        QRectF adjustedRect = adjustRectToAspect(actualCoverRect, imgSize);
+        image->setRect(adjustedRect);
+        image->setKeepAspectRatio(!imgSize.isValid());  // 有效时 false（拉伸填充），无效时 true 回退
         image->setScaleFactor(1.0);
         image->setOpacity(1.0);
         image->setName(QString::fromUtf8("封面"));
@@ -654,7 +685,9 @@ void MultiColumnLayout::generateBookItemElements(
         text->setTextColor(COLOR_TEXT_BLACK);
         text->setAlignment(Qt::AlignLeft | Qt::AlignTop);
         text->setLineHeight(DESC_LINE_HEIGHT);
-        text->setRect(QRectF(textX, textY, textWidth, descHeight));
+        // 修复：正文 rect 起点改为 textX + labelWidth，宽度改为 textWidth - labelWidth
+        // 与 renderPage 中正文第一行缩进到标签右侧的视觉表现保持一致
+        text->setRect(QRectF(textX + labelWidth, textY, textWidth - labelWidth, descHeight));
         text->setName(QString::fromUtf8("内容简介正文"));
         text->setZOrder(zOrder++);
         elements.append(PageElementPtr(text.data()));

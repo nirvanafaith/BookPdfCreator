@@ -132,6 +132,7 @@ void ImageCache::clearCache()
 {
     QMutexLocker locker(&m_mutex);
     m_pixmapCache.clear();
+    m_sizeCache.clear();  // 清空尺寸缓存
 }
 
 void ImageCache::removeCache(const QString &path)
@@ -150,6 +151,49 @@ void ImageCache::removeCache(const QString &path)
     for (const QString &key : keysToRemove) {
         m_pixmapCache.remove(key);
     }
+
+    // 移除尺寸缓存中所有以 path 开头的项
+    QList<QString> sizeKeysToRemove;
+    for (auto it = m_sizeCache.constBegin(); it != m_sizeCache.constEnd(); ++it) {
+        if (it.key().startsWith(path)) {
+            sizeKeysToRemove.append(it.key());
+        }
+    }
+    for (const QString &key : sizeKeysToRemove) {
+        m_sizeCache.remove(key);
+    }
+}
+
+QSize ImageCache::getOriginalSize(const QString& path)
+{
+    // 1. 检查缓存命中
+    auto it = m_sizeCache.constFind(path);
+    if (it != m_sizeCache.constEnd()) {
+        return it.value();
+    }
+
+    QSize result;
+
+    // 2. 优先使用 QImageReader::size()（不加载图片内容）
+    QImageReader reader(path);
+    if (reader.supportsOption(QImageIOHandler::Size)) {
+        QSize size = reader.size();
+        if (size.isValid()) {
+            result = size;
+        }
+    }
+
+    // 3. 若失败，回退到 QPixmap 加载
+    if (!result.isValid()) {
+        QPixmap pixmap(path);
+        if (!pixmap.isNull()) {
+            result = pixmap.size();
+        }
+    }
+
+    // 4. 缓存结果（包括无效结果，避免重复尝试）
+    m_sizeCache.insert(path, result);
+    return result;
 }
 
 QPixmap ImageCache::placeholderPixmap(const QSize &size) const

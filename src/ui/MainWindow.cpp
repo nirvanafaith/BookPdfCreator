@@ -2125,6 +2125,11 @@ void MainWindow::onSelectionChanged(QList<PageElementPtr> elements)
             m_layerPanel->highlightElement(QString());
         }
     }
+
+    // 确保选中装饰器同步刷新（拖放添加元素等场景）
+    if (m_editorView && m_editorView->editorScene()) {
+        m_editorView->editorScene()->updateSelectionDecorator();
+    }
 }
 
 void MainWindow::onPageModified()

@@ -357,6 +357,14 @@ void EditorView::mouseMoveEvent(QMouseEvent* event)
 // ============================================================
 void EditorView::keyPressEvent(QKeyEvent* event)
 {
+    // 平移模式中按 Esc 退出平移，恢复光标
+    if (m_isPanning && event->key() == Qt::Key_Escape) {
+        m_isPanning = false;
+        setCursor(Qt::ArrowCursor);
+        event->accept();
+        return;
+    }
+
     if (event->key() == Qt::Key_Space && !event->isAutoRepeat()) {
         if (m_scene && m_scene->focusItem()) {
             QGraphicsView::keyPressEvent(event);
