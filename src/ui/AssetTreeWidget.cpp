@@ -187,15 +187,14 @@ void AssetTreeWidget::addTextAssets(QTreeWidgetItem* bookNode, BookPtr book)
 
     txtGroup->setText(0, QString::fromUtf8("📝 文本 (%1)").arg(fields.size()));
 
-    // 创建文本叶子节点，格式：标签: "内容预览..."
+    // 创建文本叶子节点，直接显示内容（合并标签和内容）
     for (const Field& f : fields) {
         QTreeWidgetItem* node = new QTreeWidgetItem(txtGroup);
-        node->setText(0, QString::fromUtf8("%1: \"%2\"")
-                      .arg(f.label).arg(truncateText(f.value)));
+        node->setText(0, truncateText(f.value));
         node->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsDragEnabled);
         node->setData(0, Qt::UserRole, TextAsset);
         node->setData(0, Qt::UserRole + 2, f.value);   // 完整文本内容
-        node->setData(0, Qt::UserRole + 3, f.label);   // 文本标签
+        node->setData(0, Qt::UserRole + 3, f.label);   // 文本标签（保留，兼容拖拽MimeData）
         node->setData(0, Qt::UserRole + 4, bookIndex);
         node->setData(0, Qt::UserRole + 5, bookTitle);
     }

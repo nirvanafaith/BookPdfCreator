@@ -1,4 +1,13 @@
 <RCC>
     <qresource prefix="/">
+        <file>icons/tool-select.svg</file>
+        <file>icons/tool-rect.svg</file>
+        <file>icons/tool-ellipse.svg</file>
+        <file>icons/tool-line.svg</file>
+        <file>icons/tool-roundedrect.svg</file>
+        <file>icons/tool-brush.svg</file>
+        <file>icons/tool-bucket.svg</file>
+        <file>icons/tool-eyedropper.svg</file>
+        <file>icons/tool-text.svg</file>
     </qresource>
 </RCC>

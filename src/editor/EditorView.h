@@ -42,7 +42,7 @@ public:
 
     // ---- 兼容原有 PdfPreviewWidget 的 API ----
     void setLayoutEngine(LayoutEnginePtr engine);
-    void setCurrentPage(int page);
+    void setCurrentPage(int page, bool forceReload = false);
     int currentPage() const;
     int pageCount() const;
 
@@ -91,6 +91,9 @@ private:
     void createImageElement(EditorScene* scene, const QString& imagePath, const QPointF& pos);
     void createTextElement(EditorScene* scene, const QString& text, const QString& label, const QPointF& pos);
     void createTextFromTxtFile(EditorScene* scene, const QString& filePath, const QPointF& pos);
+
+    // 判断文件是否为Qt支持的图片格式（用于外部文件拖入过滤）
+    bool isImageFile(const QString& filePath) const;
 };
 
 #endif // EDITORVIEW_H

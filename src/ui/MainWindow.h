@@ -14,6 +14,7 @@
 #include "editor/LayerPanel.h"
 #include "editor/PropertyPanel.h"
 #include "editor/TextFormatToolbar.h"
+#include "editor/ToolsPanel.h"
 #include "editor/PageData.h"
 #include "editor/PageElement.h"
 #include "ui/AssetTreeWidget.h"
@@ -26,11 +27,14 @@ class QComboBox;
 class QLabel;
 class QSpinBox;
 class QDockWidget;
+class QTabWidget;
 class PdfExporter;
 class ZipReader;
 class QProgressDialog;
 class EditorScene;
 class BaseEditorItem;
+class LayoutLibraryWidget;   // 版式库组件（前向声明）
+class FixedAssetWidget;      // 固定素材组件（前向声明）
 struct PaperSize;   // 纸张尺寸预设（定义于 LayoutConstants.h）
 
 class MainWindow : public QMainWindow
@@ -111,6 +115,7 @@ private:
     void updateLayoutEngine();
     void updateStatusBar();
     void recalculateLayout();
+    void onLayoutSelected(LayoutMode mode);  // 版式选择处理
 
     // 编辑器辅助函数
     void saveCurrentPageData();     // 保存当前页编辑数据到m_editedPages
@@ -172,6 +177,10 @@ private:
     // UI组件
     QSplitter* m_splitter;
     AssetTreeWidget* m_assetTree;   // 素材树组件（替代原QListWidget书列表）
+    QTabWidget* m_leftTabWidget;    // 左侧标签页容器
+    ToolsPanel* m_toolsPanel;       // PS风格工具面板
+    FixedAssetWidget* m_fixedAssetWidget;  // 固定素材组件
+    LayoutLibraryWidget* m_layoutLibrary;  // 版式库组件
     EditorView* m_editorView;       // 编辑器视图（替代PdfPreviewWidget）
     QComboBox* m_layoutCombo;
     QComboBox* m_zoomCombo;

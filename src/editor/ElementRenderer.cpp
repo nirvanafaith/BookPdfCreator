@@ -97,6 +97,12 @@ void ElementRenderer::renderText(QPainter* painter, const TextElementData* text)
     QColor color = text->textColor();
     Qt::Alignment align = text->alignment();
 
+    // 应用字间距（0=默认，非0时用百分比模式）
+    qreal letterSpacing = text->letterSpacing();
+    if (qAbs(letterSpacing) > 0.001) {
+        font.setLetterSpacing(QFont::PercentageSpacing, 100.0 + letterSpacing);
+    }
+
     // 行高计算：0=自动，>0=固定值
     QFontMetrics fm(font);
     qreal lineHeight = text->lineHeight();
@@ -187,10 +193,10 @@ void ElementRenderer::renderImage(QPainter* painter, const ImageElementData* ima
     painter->setRenderHint(QPainter::Antialiasing, true);
     painter->setRenderHint(QPainter::SmoothPixmapTransform, true);
 
-    // 通过ImageCache获取图片（自动缓存，传入目标尺寸优化内存）
+    // 通过ImageCache获取原始尺寸图片（不预缩放，避免与renderImage的缩放逻辑冲突导致双重缩放形变）
     QPixmap pixmap;
     if (!path.isEmpty()) {
-        pixmap = ImageCache::instance().getPixmap(path, rect.size().toSize());
+        pixmap = ImageCache::instance().getPixmap(path, QSize());
     }
 
     if (pixmap.isNull()) {
@@ -223,8 +229,8 @@ void ElementRenderer::renderImage(QPainter* painter, const ImageElementData* ima
             }
         }
 
-        // 在元素rect内居中
-        targetRect.moveCenter(rect.center());
+        // 左上角对齐rect.topLeft，避免缩放时图像因居中偏移而跳跃
+        targetRect.setTopLeft(rect.topLeft());
 
         // 绘制图片
         painter->drawPixmap(targetRect, pixmap,

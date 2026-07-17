@@ -73,8 +73,11 @@ SOURCES += \
     src/editor/TextFormatToolbar.cpp \
     src/editor/LayerPanel.cpp \
     src/editor/PropertyPanel.cpp \
+    src/editor/ToolsPanel.cpp \
     src/editor/SnapGuide.cpp \
     src/editor/GuideLineItem.cpp \
+    src/ui/LayoutLibraryWidget.cpp \
+    src/ui/FixedAssetWidget.cpp \
     third_party/miniz/miniz.c \
     third_party/miniz/miniz_tdef.c \
     third_party/miniz/miniz_tinfl.c \
@@ -113,8 +116,11 @@ HEADERS += \
     src/editor/TextFormatToolbar.h \
     src/editor/LayerPanel.h \
     src/editor/PropertyPanel.h \
+    src/editor/ToolsPanel.h \
     src/editor/SnapGuide.h \
     src/editor/GuideLineItem.h \
+    src/ui/LayoutLibraryWidget.h \
+    src/ui/FixedAssetWidget.h \
     third_party/miniz/miniz.h \
     third_party/miniz/miniz_common.h \
     third_party/miniz/miniz_export.h \

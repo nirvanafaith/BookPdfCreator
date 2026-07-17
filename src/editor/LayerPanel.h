@@ -42,6 +42,11 @@ public:
     // 重建过程中会保留当前选中元素的选中状态。
     void updateLayers(const QList<PageElementPtr>& elements);
 
+    // 高亮选中指定元素对应的图层条目（场景选中变化时调用）
+    void highlightElement(const QString& elementId);
+    // 高亮选中多个元素对应的图层条目
+    void highlightElements(const QStringList& elementIds);
+
     // 清空图层列表
     void clearLayers();
 
@@ -61,6 +66,7 @@ signals:
     void sendToBack(const QString& elementId);
     void moveUp(const QString& elementId);
     void moveDown(const QString& elementId);
+    void layerRenamed(const QString& elementId, const QString& newName);
 
 protected:
     // 事件过滤器：监听列表视口的 Drop 事件以触发拖拽重排序处理

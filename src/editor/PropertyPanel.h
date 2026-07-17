@@ -12,6 +12,8 @@ class QFontComboBox;
 class QButtonGroup;
 class QSlider;
 class QLabel;
+class QCheckBox;
+class QTextEdit;
 
 // ============================================================
 // PropertyPanel - 属性面板
@@ -55,10 +57,21 @@ signals:
     void fontSizeChanged(const QString& elementId, int size);
     void textColorChanged(const QString& elementId, const QColor& color);
     void alignmentChanged(const QString& elementId, Qt::Alignment align);
+    void lineHeightChanged(const QString& elementId, qreal height);
+    void letterSpacingChanged(const QString& elementId, qreal spacing);
+
+    // 文本内容变更信号（属性面板编辑文本内容时发射）
+    void textContentChanged(const QString& elementId, const QString& newText);
 
     // 图片属性变更信号
     void opacityChanged(const QString& elementId, qreal opacity);
     void scaleFactorChanged(const QString& elementId, qreal scale);
+
+    // 形状属性变更信号
+    void fillEnabledChanged(const QString& elementId, bool enabled);
+    void fillColorChanged(const QString& elementId, const QColor& color);
+    void borderColorChanged(const QString& elementId, const QColor& color);
+    void borderWidthChanged(const QString& elementId, qreal width);
 
 private:
     // ---- 通用属性组（变换） ----
@@ -79,6 +92,9 @@ private:
     QPushButton* m_alignCenterBtn;
     QPushButton* m_alignRightBtn;
     QPushButton* m_alignJustifyBtn;
+    QDoubleSpinBox* m_lineHeightSpin;      // 行间距
+    QDoubleSpinBox* m_letterSpacingSpin;   // 字间距
+    QTextEdit* m_contentEdit;          // 文本内容编辑框（固定高度，垂直滚动条）
 
     // ---- 图片属性组 ----
     QGroupBox* m_imageGroup;
@@ -86,6 +102,16 @@ private:
     QSlider* m_scaleSlider;
     QSpinBox* m_opacityValue;         // 不透明度百分比输入
     QSpinBox* m_scaleValue;           // 缩放百分比输入
+
+    // ---- 形状属性组 ----
+    QGroupBox* m_shapeGroup;
+    QCheckBox* m_fillCheck;
+    QPushButton* m_fillColorBtn;
+    QPushButton* m_borderColorBtn;
+    QDoubleSpinBox* m_borderWidthSpin;
+    QWidget* m_fillWidget;            // 填充label+button容器，便于整体显隐
+    QColor m_currentFillColor;
+    QColor m_currentBorderColor;
 
     // ---- 提示标签（无选中时显示） ----
     QLabel* m_hintLabel;
@@ -100,7 +126,13 @@ private:
     void setupConnections();
     void showTextGroup(bool show);
     void showImageGroup(bool show);
+    void showShapeGroup(bool show);
     void updateColorButton();         // 更新颜色按钮外观
+    void updateShapeColorButtons();   // 更新形状颜色按钮外观
+    void setupContentEditConnections();  // 设置内容编辑框的连接（事件过滤器）
+
+protected:
+    bool eventFilter(QObject* watched, QEvent* event) override;
 };
 
 #endif // PROPERTYPANEL_H

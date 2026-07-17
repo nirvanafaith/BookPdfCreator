@@ -48,7 +48,7 @@ void ImageEditorItem::paint(QPainter* painter, const QStyleOptionGraphicsItem* o
 //   - scaleFactor != 1.0：原始尺寸 * scaleFactor
 //   - scaleFactor == 1.0 且 keepAspectRatio：保持宽高比缩放到rect内
 //   - scaleFactor == 1.0 且 !keepAspectRatio：拉伸填充rect
-// 最后在rect内居中（moveCenter(rect.center)）。
+// 最后左上角对齐rect.topLeft（setTopLeft(rect.topLeft)）。
 //
 // 返回无效QRectF表示图片未加载，调用方应回退到基类实现。
 // ============================================================
@@ -63,8 +63,8 @@ QRectF ImageEditorItem::computeActualImageRect() const
         return QRectF();  // 无路径，回退
     }
 
-    // 通过ImageCache获取图片（与渲染时一致，传入目标尺寸优化内存）
-    QPixmap pixmap = ImageCache::instance().getPixmap(path, rect.size().toSize());
+    // 通过ImageCache获取原始尺寸图片（与渲染时一致，不预缩放避免双重缩放）
+    QPixmap pixmap = ImageCache::instance().getPixmap(path, QSize());
     if (pixmap.isNull()) {
         return QRectF();  // 图片加载失败，回退
     }
@@ -88,10 +88,10 @@ QRectF ImageEditorItem::computeActualImageRect() const
         }
     }
 
-    // 在rect内居中（本地坐标系中 rect.topLeft = (0,0)）
+    // 左上角对齐rect.topLeft（与ElementRenderer::renderImage保持一致）
     QRectF targetRect;
     targetRect.setSize(actualSize);
-    targetRect.moveCenter(rect.center());
+    targetRect.setTopLeft(rect.topLeft());
     // 转换到item本地坐标系：平移使rect.topLeft成为原点
     targetRect.translate(-rect.topLeft());
 

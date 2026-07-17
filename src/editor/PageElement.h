@@ -127,6 +127,10 @@ public:
     qreal lineHeight() const;
     void setLineHeight(qreal height);
 
+    // 字间距（0=默认，>0加宽，<0缩窄，百分比偏移量）
+    qreal letterSpacing() const;
+    void setLetterSpacing(qreal spacing);
+
     // 富文本字符级格式（选中文本的混合格式）
     QList<CharFormat> charFormats() const;
     void setCharFormats(const QList<CharFormat>& formats);
@@ -142,6 +146,7 @@ private:
     QColor m_textColor;               // 默认文字颜色
     Qt::Alignment m_alignment;        // 对齐方式
     qreal m_lineHeight;               // 行高
+    qreal m_letterSpacing;             // 字间距（0=默认）
     QList<CharFormat> m_charFormats;  // 字符级格式列表
 };
 

@@ -16,6 +16,8 @@
 #include <QDropEvent>
 #include <QTimer>
 #include <QPair>
+#include <QLineEdit>
+#include <QKeyEvent>
 
 // ============================================================
 // 图标生成辅助函数（匿名命名空间，仅本文件可见）
@@ -151,16 +153,21 @@ QIcon makeLockIcon(bool locked)
 // ============================================================
 // LayerItemWidget - 单个图层条目的自定义控件
 //
-// 不使用 Q_OBJECT 宏（避免在 .cpp 中引入额外 MOC 依赖）。
+// 使用 Q_OBJECT 宏以支持 layerRenamed 信号。本 .cpp 文件末尾
+// 通过 #include "LayerPanel.moc" 引入 MOC 生成代码。
 // 可见性与锁定按钮为 checkable QToolButton，其 toggled 信号
 // 由 LayerPanel 在创建条目时连接到对应 lambda。
 //
 // 点击非按钮区域会选中对应的 QListWidgetItem（默认情况下
 // setItemWidget 的控件不会把鼠标事件转发给列表视图选中条目，
 // 需在此手动处理）。
+//
+// 双击名称标签可进入重命名编辑模式：显示 QLineEdit 替换 QLabel，
+// 按 Enter 提交（发出 layerRenamed 信号），按 Esc 取消。
 // ============================================================
 class LayerItemWidget : public QWidget
 {
+    Q_OBJECT
 public:
     LayerItemWidget(const QString& elementId,
                     PageElementData::ElementType type,
@@ -173,6 +180,7 @@ public:
         , m_visible(visible)
         , m_locked(locked)
         , m_item(nullptr)
+        , m_nameEdit(nullptr)
     {
         // 类型图标
         m_typeIcon = new QLabel(this);
@@ -214,6 +222,15 @@ public:
         layout->addWidget(m_visibilityBtn);
         layout->addWidget(m_lockBtn);
 
+        // 重命名编辑框（覆盖在 m_nameLabel 之上，初始隐藏）
+        // 不加入布局——通过 setGeometry 与 m_nameLabel 对齐。
+        m_nameEdit = new QLineEdit(this);
+        m_nameEdit->hide();
+        m_nameEdit->setStyleSheet(QStringLiteral("QLineEdit { border: 1px solid #2576d2; padding: 1px; }"));
+        m_nameEdit->installEventFilter(this);
+        connect(m_nameEdit, &QLineEdit::returnPressed, this, &LayerItemWidget::commitRename);
+        connect(m_nameEdit, &QLineEdit::editingFinished, this, &LayerItemWidget::commitRename);
+
         // 按钮状态变化时同步图标与提示
         connect(m_visibilityBtn, &QToolButton::toggled, this, [this](bool checked) {
             m_visible = checked;
@@ -246,6 +263,38 @@ public:
     QToolButton* visibilityButton() const { return m_visibilityBtn; }
     QToolButton* lockButton() const { return m_lockBtn; }
 
+    // 进入重命名编辑模式：隐藏 QLabel，显示 QLineEdit 并聚焦
+    void startRename()
+    {
+        if (!m_nameEdit || !m_nameLabel) return;
+        m_originalName = m_nameLabel->text();
+        m_nameEdit->setText(m_originalName);
+        m_nameEdit->setGeometry(m_nameLabel->geometry());
+        m_nameLabel->hide();
+        m_nameEdit->show();
+        m_nameEdit->selectAll();
+        m_nameEdit->setFocus();
+    }
+
+    // 提交重命名：若文本非空且与原值不同，则发出 layerRenamed 信号
+    void commitRename()
+    {
+        if (!m_nameEdit || !m_nameLabel) return;
+        if (!m_nameEdit->isVisible()) return;  // 已经提交过了
+
+        QString newName = m_nameEdit->text().trimmed();
+        m_nameEdit->hide();
+        m_nameLabel->show();
+
+        if (newName.isEmpty() || newName == m_originalName) {
+            return;  // 空名或未修改，不提交
+        }
+
+        m_nameLabel->setText(newName);
+        m_nameLabel->setToolTip(newName);
+        emit layerRenamed(m_elementId, newName);
+    }
+
 protected:
     void mousePressEvent(QMouseEvent* event) override
     {
@@ -262,6 +311,35 @@ protected:
         event->ignore();
     }
 
+    void mouseDoubleClickEvent(QMouseEvent* event) override
+    {
+        if (event->button() == Qt::LeftButton) {
+            // 检查双击是否在名称标签区域
+            if (m_nameLabel && m_nameLabel->geometry().contains(event->pos())) {
+                startRename();
+                return;
+            }
+        }
+        QWidget::mouseDoubleClickEvent(event);
+    }
+
+    bool eventFilter(QObject* watched, QEvent* event) override
+    {
+        // 监听 m_nameEdit 的按键事件：Esc 取消重命名
+        if (watched == m_nameEdit && event->type() == QEvent::KeyPress) {
+            QKeyEvent* keyEvent = static_cast<QKeyEvent*>(event);
+            if (keyEvent->key() == Qt::Key_Escape) {
+                m_nameEdit->hide();
+                m_nameLabel->show();
+                return true;
+            }
+        }
+        return QWidget::eventFilter(watched, event);
+    }
+
+signals:
+    void layerRenamed(const QString& elementId, const QString& newName);
+
 private:
     QString m_elementId;
     PageElementData::ElementType m_type;
@@ -272,6 +350,8 @@ private:
     QLabel* m_nameLabel;
     QToolButton* m_visibilityBtn;
     QToolButton* m_lockBtn;
+    QLineEdit* m_nameEdit;     // 重命名编辑框
+    QString m_originalName;    // 编辑前的原始名称
 };
 
 // ============================================================
@@ -380,6 +460,9 @@ void LayerPanel::updateLayers(const QList<PageElementPtr>& elements)
                     if (m_syncing) return;
                     emit elementLockChanged(widget->elementId(), checked);
                 });
+        // 连接重命名信号（双击名称编辑后提交）
+        connect(widget, &LayerItemWidget::layerRenamed,
+                this, &LayerPanel::layerRenamed);
     }
 
     // 恢复选中状态
@@ -389,6 +472,81 @@ void LayerPanel::updateLayers(const QList<PageElementPtr>& elements)
             if (it->data(kElementIdRole).toString() == selectedId) {
                 m_listWidget->setCurrentRow(i, QItemSelectionModel::ClearAndSelect);
                 break;
+            }
+        }
+    }
+
+    m_syncing = false;
+}
+
+// ============================================================
+// highlightElement - 高亮单个元素对应的图层条目
+//
+// 场景选中变化时调用，正向同步画布→图层。
+// 遍历列表条目找到匹配elementId的行，选中并滚动到可见。
+// 空elementId时清除所有选中。
+// ============================================================
+void LayerPanel::highlightElement(const QString& elementId)
+{
+    if (!m_listWidget) return;
+
+    // 使用m_syncing保护，防止setCurrentRow触发onItemSelectionChanged
+    // 发射elementSelected信号导致反馈环路（场景选中→图层高亮→场景选中...）
+    m_syncing = true;
+
+    // 空ID清除选中
+    if (elementId.isEmpty()) {
+        m_listWidget->clearSelection();
+        m_listWidget->setCurrentRow(-1);
+    } else {
+        // 遍历查找匹配的条目
+        for (int i = 0; i < m_listWidget->count(); ++i) {
+            QListWidgetItem* item = m_listWidget->item(i);
+            if (item->data(kElementIdRole).toString() == elementId) {
+                m_listWidget->setCurrentRow(i, QItemSelectionModel::ClearAndSelect);
+                m_listWidget->scrollToItem(item, QAbstractItemView::EnsureVisible);
+                break;
+            }
+        }
+    }
+
+    m_syncing = false;
+}
+
+// ============================================================
+// highlightElements - 高亮多个元素对应的图层条目
+//
+// 多选时调用，选中所有匹配elementId的条目。
+// ============================================================
+void LayerPanel::highlightElements(const QStringList& elementIds)
+{
+    if (!m_listWidget) return;
+
+    // 使用m_syncing保护，防止反馈环路
+    m_syncing = true;
+
+    // 空列表清除选中
+    if (elementIds.isEmpty()) {
+        m_listWidget->clearSelection();
+        m_listWidget->setCurrentRow(-1);
+    } else {
+        // 清除旧选中
+        m_listWidget->clearSelection();
+
+        // 遍历选中所有匹配的条目
+        bool first = true;
+        for (int i = 0; i < m_listWidget->count(); ++i) {
+            QListWidgetItem* item = m_listWidget->item(i);
+            if (elementIds.contains(item->data(kElementIdRole).toString())) {
+                if (first) {
+                    // 第一个匹配项设为current item（蓝色高亮）
+                    m_listWidget->setCurrentRow(i, QItemSelectionModel::ClearAndSelect);
+                    m_listWidget->scrollToItem(item, QAbstractItemView::EnsureVisible);
+                    first = false;
+                } else {
+                    // 后续匹配项追加选中
+                    item->setSelected(true);
+                }
             }
         }
     }
@@ -540,3 +698,8 @@ bool LayerPanel::eventFilter(QObject* obj, QEvent* event)
     }
     return QWidget::eventFilter(obj, event);
 }
+
+// LayerItemWidget 在本 .cpp 中使用 Q_OBJECT 宏，需引入 MOC 生成代码。
+// qmake 会对 SOURCES 中的 .cpp 文件扫描 Q_OBJECT，生成 <filename>.moc
+// 放入 MOC_DIR（已自动加入 INCLUDEPATH）。
+#include "LayerPanel.moc"

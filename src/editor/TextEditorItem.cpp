@@ -9,6 +9,10 @@
 #include <QFocusEvent>
 #include <QTextLayout>
 #include <QTextLine>
+#include <QTextCursor>
+#include <QTextBlockFormat>
+#include <QTextDocument>
+#include <QAbstractTextDocumentLayout>
 #include <QFontMetrics>
 #include <QBrush>
 #include <QPen>
@@ -51,25 +55,77 @@ void TextEditorItem::startEditing()
     if (m_editing) return;
     m_editing = true;
 
-    // 懒创建编辑子Item
     if (!m_editItem) {
         m_editItem = new QGraphicsTextItem(this);
-        // 安装事件过滤器以监听焦点丢失（点击外部时退出编辑）
         m_editItem->installEventFilter(this);
     }
 
-    // 从元素数据初始化编辑器内容
     const TextElementData* textData =
         static_cast<const TextElementData*>(m_element.constData());
+
+    QFont editFont = textData->font();
+    qreal letterSpacing = textData->letterSpacing();
+    if (qAbs(letterSpacing) > 0.001) {
+        editFont.setLetterSpacing(QFont::PercentageSpacing, 100.0 + letterSpacing);
+    }
+
     m_editItem->setPlainText(textData->text());
-    m_editItem->setFont(textData->font());
+    m_editItem->setFont(editFont);
+
+    QTextDocument* doc = m_editItem->document();
+    doc->setDocumentMargin(0);
+    doc->setDefaultFont(editFont);
     m_editItem->setDefaultTextColor(textData->textColor());
-    // 文本宽度=元素宽度，实现自动换行
-    m_editItem->setTextWidth(m_element.constData()->rect().width());
-    // 启用文本编辑交互（光标、选择、键盘输入）
+
+    QRectF rect = textData->rect();
+    Qt::Alignment align = textData->alignment();
+
+    qreal lineHeight = textData->lineHeight();
+    QFontMetrics fm(editFont);
+    if (lineHeight <= 0) {
+        lineHeight = fm.height();
+    }
+
+    m_editItem->setTextWidth(rect.width());
+
+    QTextOption option = doc->defaultTextOption();
+    option.setWrapMode(QTextOption::WrapAtWordBoundaryOrAnywhere);
+    option.setAlignment(align);
+    option.setUseDesignMetrics(false);
+    doc->setDefaultTextOption(option);
+
+    {
+        QTextCursor cursor(doc);
+        cursor.select(QTextCursor::Document);
+        QTextBlockFormat fmt;
+        fmt.setLineHeight(lineHeight, QTextBlockFormat::FixedHeight);
+        fmt.setAlignment(align);
+        fmt.setTopMargin(0);
+        fmt.setBottomMargin(0);
+        fmt.setLeftMargin(0);
+        fmt.setRightMargin(0);
+        fmt.setIndent(0);
+        cursor.mergeBlockFormat(fmt);
+    }
+
+    doc->setTextWidth(rect.width());
+    doc->adjustSize();
+    qreal docHeight = doc->size().height();
+    if (docHeight <= 0) {
+        docHeight = lineHeight;
+    }
+
+    qreal vOffset = 0.0;
+    if (align & Qt::AlignVCenter) {
+        vOffset = (rect.height() - docHeight) / 2.0;
+        if (vOffset < 0) vOffset = 0.0;
+    } else if (align & Qt::AlignBottom) {
+        vOffset = rect.height() - docHeight;
+        if (vOffset < 0) vOffset = 0.0;
+    }
+
     m_editItem->setTextInteractionFlags(Qt::TextEditorInteraction);
-    // 编辑器位于item本地坐标原点
-    m_editItem->setPos(0, 0);
+    m_editItem->setPos(0, vOffset);
     m_editItem->show();
     m_editItem->setFocus();
 
@@ -163,6 +219,16 @@ void TextEditorItem::mouseDoubleClickEvent(QGraphicsSceneMouseEvent* event)
 {
     if (event->button() == Qt::LeftButton) {
         startEditing();
+        // 将光标定位到双击位置（而非文本起始），优化编辑手感
+        if (m_editItem && m_editItem->document() && m_editItem->document()->documentLayout()) {
+            QPointF localPos = event->pos();
+            QTextCursor cursor = m_editItem->textCursor();
+            int pos = m_editItem->document()->documentLayout()->hitTest(localPos, Qt::FuzzyHit);
+            if (pos >= 0) {
+                cursor.setPosition(pos);
+                m_editItem->setTextCursor(cursor);
+            }
+        }
         event->accept();
     } else {
         BaseEditorItem::mouseDoubleClickEvent(event);
@@ -217,6 +283,12 @@ QRectF TextEditorItem::computeActualTextRect() const
     QRectF rect = text->rect();
     QFont font = text->font();
     Qt::Alignment align = text->alignment();
+
+    // 应用字间距（与渲染一致）
+    qreal letterSpacing = text->letterSpacing();
+    if (qAbs(letterSpacing) > 0.001) {
+        font.setLetterSpacing(QFont::PercentageSpacing, 100.0 + letterSpacing);
+    }
 
     // 行高计算：0=自动用QFontMetrics::height()，>0=固定值（与渲染一致）
     QFontMetrics fm(font);

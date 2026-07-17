@@ -250,6 +250,7 @@ TextElementData::TextElementData()
     , m_textColor(0, 0, 0)                           // 默认黑色
     , m_alignment(Qt::AlignLeft | Qt::AlignTop)       // 默认左上对齐
     , m_lineHeight(0.0)                               // 0=自动行高
+    , m_letterSpacing(0.0)                            // 0=默认字间距
 {
     m_type = Text;
 }
@@ -261,6 +262,7 @@ TextElementData::TextElementData(const TextElementData& other)
     , m_textColor(other.m_textColor)
     , m_alignment(other.m_alignment)
     , m_lineHeight(other.m_lineHeight)
+    , m_letterSpacing(other.m_letterSpacing)
     , m_charFormats(other.m_charFormats)
 {
 }
@@ -315,6 +317,16 @@ void TextElementData::setLineHeight(qreal height)
     m_lineHeight = height;
 }
 
+qreal TextElementData::letterSpacing() const
+{
+    return m_letterSpacing;
+}
+
+void TextElementData::setLetterSpacing(qreal spacing)
+{
+    m_letterSpacing = spacing;
+}
+
 QList<TextElementData::CharFormat> TextElementData::charFormats() const
 {
     return m_charFormats;
@@ -340,6 +352,7 @@ QJsonObject TextElementData::toJson() const
     json["textColor"] = colorToString(m_textColor);
     json["alignment"] = int(m_alignment);
     json["lineHeight"] = m_lineHeight;
+    json["letterSpacing"] = m_letterSpacing;
 
     // 字符级格式列表
     QJsonArray formatsArray;
@@ -366,6 +379,7 @@ void TextElementData::fromJson(const QJsonObject& json)
     m_alignment = Qt::Alignment(json.value("alignment").toInt(
         int(Qt::AlignLeft | Qt::AlignTop)));
     m_lineHeight = json.value("lineHeight").toDouble(0.0);
+    m_letterSpacing = json.value("letterSpacing").toDouble(0.0);
 
     // 字符级格式列表
     m_charFormats.clear();

@@ -32,6 +32,8 @@
 #include <QTextLayout>
 #include <QTextLine>
 #include <QUuid>
+#include <QGraphicsPathItem>
+#include <QImage>
 
 // ============================================================
 // 常量定义
@@ -65,6 +67,9 @@ EditorScene::EditorScene(QObject* parent)
     , m_resizeHandle(TopLeft)
     , m_snapEnabled(true)
     , m_editingTextItem(nullptr)
+    , m_currentTool(ToolSelect)
+    , m_foregroundColor(Qt::black)
+    , m_previewItem(nullptr)
 {
     // 设置页面场景矩形（动态尺寸，默认A4）
     setSceneRect(0, 0, PageSizeManager::instance().pageWidth(),
@@ -206,11 +211,34 @@ QUndoStack* EditorScene::undoStack() const
 // 通过AddCommand入撤销栈，redo()会自动创建Item并添加到场景。
 // 传入空指针时直接返回，避免构造无效命令。
 // 与Ctrl+D复制流程共用同一命令路径，保证撤销/重做行为一致。
+//
+// zOrder处理：在入栈前确保新元素位于最上层（zOrder = 当前最大zOrder + 1）。
+// 从场景Item读取真实状态（m_currentPageData在编辑过程中不随增删实时更新）。
+// 因PageElementPtr指向抽象基类仅支持const访问，通过clone()获取可修改副本。
 // ============================================================
 void EditorScene::addElement(const PageElementPtr& element)
 {
     if (!element) return;
-    m_undoStack->push(new AddCommand(this, element));
+
+    // 确保新元素在最上层：zOrder = 当前最大zOrder + 1
+    int maxZ = 0;
+    const QList<QGraphicsItem*> allItems = items();
+    for (QGraphicsItem* it : allItems) {
+        auto* baseItem = dynamic_cast<BaseEditorItem*>(it);
+        if (baseItem) {
+            int z = baseItem->elementData().constData()->zOrder();
+            if (z > maxZ) {
+                maxZ = z;
+            }
+        }
+    }
+
+    PageElementData* cloned = element.constData()->clone();
+    cloned->setZOrder(maxZ + 1);
+    PageElementPtr newElem(cloned);
+    m_undoStack->push(new AddCommand(this, newElem));
+    // 通知图层面板等外部组件刷新（拖入外部图片后立即出现在图层库）
+    emit pageModified();
 }
 
 // ============================================================
@@ -344,17 +372,49 @@ void EditorScene::drawForeground(QPainter* painter, const QRectF& rect)
 // ============================================================
 void EditorScene::mousePressEvent(QGraphicsSceneMouseEvent* event)
 {
-    // 如果有Item拥有焦点（文本编辑模式），先清除焦点以退出编辑模式。
-    // clearFocus()触发FocusOut事件，TextEditorItem的eventFilter据此调用finishEditing()。
-    if (focusItem()) {
-        focusItem()->clearFocus();
-    }
-
-    // 文本编辑模式结束：断开光标变化信号
+    // 先断开编辑文本Item的信号并清空指针，再清除焦点。
+    // 必须在此顺序操作：clearFocus()会触发FocusOut→finishEditing()，
+    // 若文本已修改，finishEditing会push TextEditCommand，其redo()删除旧TextEditorItem
+    // （连同其QGraphicsTextItem子Item），导致m_editingTextItem成为悬空指针。
     if (m_editingTextItem) {
         disconnect(m_editingTextItem->document(), &QTextDocument::cursorPositionChanged,
                    this, &EditorScene::onEditCursorChanged);
         m_editingTextItem = nullptr;
+    }
+
+    // 清除焦点（可能触发finishEditing，安全因为m_editingTextItem已置空）
+    if (focusItem()) {
+        focusItem()->clearFocus();
+    }
+
+    // 工具模式处理（非选择工具时由工具处理器接管）
+    if (m_currentTool != ToolSelect) {
+        if (event->button() == Qt::LeftButton) {
+            switch (m_currentTool) {
+            case ToolRectangle:
+            case ToolEllipse:
+            case ToolLine:
+            case ToolRoundedRect:
+                handleShapeToolPress(event);
+                break;
+            case ToolBrush:
+                handleBrushToolPress(event);
+                break;
+            case ToolPaintBucket:
+                handlePaintBucketPress(event);
+                break;
+            case ToolEyedropper:
+                handleEyedropperPress(event);
+                break;
+            case ToolText:
+                handleTextToolPress(event);
+                break;
+            default:
+                break;
+            }
+        }
+        event->accept();
+        return;
     }
 
     if (event->button() != Qt::LeftButton) {
@@ -428,6 +488,25 @@ void EditorScene::mousePressEvent(QGraphicsSceneMouseEvent* event)
 // ============================================================
 void EditorScene::mouseMoveEvent(QGraphicsSceneMouseEvent* event)
 {
+    // 工具模式处理（非选择工具时由工具处理器接管）
+    if (m_currentTool != ToolSelect) {
+        switch (m_currentTool) {
+        case ToolRectangle:
+        case ToolEllipse:
+        case ToolLine:
+        case ToolRoundedRect:
+            handleShapeToolMove(event);
+            break;
+        case ToolBrush:
+            handleBrushToolMove(event);
+            break;
+        default:
+            break;
+        }
+        event->accept();
+        return;
+    }
+
     QPointF pos = event->scenePos();
 
     switch (m_dragMode) {
@@ -620,6 +699,25 @@ void EditorScene::mouseMoveEvent(QGraphicsSceneMouseEvent* event)
 // ============================================================
 void EditorScene::mouseReleaseEvent(QGraphicsSceneMouseEvent* event)
 {
+    // 工具模式处理（非选择工具时由工具处理器接管）
+    if (m_currentTool != ToolSelect) {
+        switch (m_currentTool) {
+        case ToolRectangle:
+        case ToolEllipse:
+        case ToolLine:
+        case ToolRoundedRect:
+            handleShapeToolRelease(event);
+            break;
+        case ToolBrush:
+            handleBrushToolRelease(event);
+            break;
+        default:
+            break;
+        }
+        event->accept();
+        return;
+    }
+
     switch (m_dragMode) {
     case Move: {
         // 仅在确实发生移动时同步数据和触发命令
@@ -1058,6 +1156,8 @@ void EditorScene::clearPage()
     // 编辑Item和参考线Item已被clear()删除，仅重置指针/列表
     m_editingTextItem = nullptr;
     m_activeGuideLines.clear();
+    // 预览Item已被clear()删除，重置悬空指针
+    m_previewItem = nullptr;
 }
 
 // ============================================================
@@ -1467,4 +1567,381 @@ QRectF EditorScene::computeResizedRect(const QRectF& initial,
     }
 
     return result;
+}
+
+// ============================================================
+// setCurrentTool - 设置当前工具
+//
+// 切换工具时隐藏预览Item，并根据工具类型设置光标。
+// ============================================================
+void EditorScene::setCurrentTool(int tool)
+{
+    m_currentTool = tool;
+    // 切换工具时隐藏预览Item（避免残留上一个工具的预览）
+    if (m_previewItem) {
+        m_previewItem->hide();
+    }
+    // 设置光标
+    if (!views().isEmpty()) {
+        if (tool == ToolSelect) {
+            views().first()->setCursor(Qt::ArrowCursor);
+        } else {
+            views().first()->setCursor(Qt::CrossCursor);
+        }
+    }
+}
+
+// ============================================================
+// setForegroundColor - 设置当前前景色
+// ============================================================
+void EditorScene::setForegroundColor(const QColor& color)
+{
+    m_foregroundColor = color;
+}
+
+// ============================================================
+// currentShapeType - 根据m_currentTool返回对应的ShapeType
+// ============================================================
+ShapeElementData::ShapeType EditorScene::currentShapeType() const
+{
+    switch (m_currentTool) {
+    case ToolRectangle:
+        return ShapeElementData::Rectangle;
+    case ToolEllipse:
+        return ShapeElementData::Ellipse;
+    case ToolLine:
+        return ShapeElementData::Line;
+    case ToolRoundedRect:
+        return ShapeElementData::RoundedRect;
+    default:
+        return ShapeElementData::Rectangle;
+    }
+}
+
+// ============================================================
+// generateElementName - 生成递增的元素名称
+//
+// 扫描当前页面已存在的元素，找到以prefix开头的最大编号，
+// 返回prefix + (maxNum+1)。例如：已有"矩形1"、"矩形2"，
+// prefix="矩形"，返回"矩形3"。
+//
+// 注：从场景Item读取名称（m_currentPageData在编辑过程中不随
+// 增删实时更新，场景Item才是当前真实状态）。
+// ============================================================
+QString EditorScene::generateElementName(const QString& prefix) const
+{
+    int maxNum = 0;
+    const QList<QGraphicsItem*> allItems = items();
+    for (QGraphicsItem* it : allItems) {
+        auto* baseItem = dynamic_cast<BaseEditorItem*>(it);
+        if (!baseItem) continue;
+        QString name = baseItem->elementData().constData()->name();
+        if (name.startsWith(prefix)) {
+            QString numStr = name.mid(prefix.length());
+            bool ok = false;
+            int num = numStr.toInt(&ok);
+            if (ok && num > maxNum) {
+                maxNum = num;
+            }
+        }
+    }
+    return prefix + QString::number(maxNum + 1);
+}
+
+// ============================================================
+// addShapeElement - 创建形状元素并添加到页面
+//
+// 根据当前工具类型创建ShapeElementData，设置前景色作为填充或边框色，
+// 通过addElement入撤销栈（AddCommand）。
+// ============================================================
+void EditorScene::addShapeElement(const QRectF& rect)
+{
+    ShapeElementData* shape = new ShapeElementData();
+    shape->setId(QUuid::createUuid().toString());
+    shape->setRect(rect);
+    shape->setShapeType(currentShapeType());
+
+    // 根据形状类型设置图层名称
+    QString namePrefix;
+    switch (currentShapeType()) {
+    case ShapeElementData::Rectangle:
+        namePrefix = QStringLiteral("矩形");
+        break;
+    case ShapeElementData::Ellipse:
+        namePrefix = QStringLiteral("椭圆");
+        break;
+    case ShapeElementData::Line:
+        namePrefix = QStringLiteral("直线");
+        break;
+    case ShapeElementData::RoundedRect:
+        namePrefix = QStringLiteral("圆角矩形");
+        break;
+    default:
+        namePrefix = QStringLiteral("形状");
+        break;
+    }
+    shape->setName(generateElementName(namePrefix));
+
+    if (m_currentTool == ToolLine) {
+        // 直线：只有边框，无填充
+        shape->setHasFill(false);
+        shape->setHasBorder(true);
+        shape->setBorderColor(m_foregroundColor);
+        shape->setBorderWidth(2.0);
+    } else {
+        // 矩形/椭圆/圆角矩形：前景色填充
+        shape->setHasFill(true);
+        shape->setFillColor(m_foregroundColor);
+        shape->setHasBorder(false);
+    }
+
+    // 圆角矩形设置默认圆角半径
+    if (m_currentTool == ToolRoundedRect) {
+        shape->setCornerRadius(10.0);
+    }
+
+    PageElementPtr elem(shape);
+    addElement(elem);
+    emit pageModified();
+}
+
+// ============================================================
+// addPathElement - 创建画笔路径元素并添加到页面
+//
+// 画笔路径以场景坐标存储（ElementRenderer在场景坐标下绘制）。
+// 元素rect为路径的包围盒。
+// ============================================================
+void EditorScene::addPathElement(const QPainterPath& path)
+{
+    ShapeElementData* shape = new ShapeElementData();
+    shape->setId(QUuid::createUuid().toString());
+    shape->setShapeType(ShapeElementData::Path);
+    shape->setName(generateElementName(QStringLiteral("画笔")));
+    QRectF bounds = path.boundingRect();
+    shape->setRect(bounds);
+    shape->setPainterPath(path);  // 场景坐标
+    // 画笔路径：只有边框（描边），无填充
+    shape->setHasFill(false);
+    shape->setHasBorder(true);
+    shape->setBorderColor(m_foregroundColor);
+    shape->setBorderWidth(2.0);
+
+    PageElementPtr elem(shape);
+    addElement(elem);
+    emit pageModified();
+}
+
+// ============================================================
+// addTextElement - 创建文本元素并添加到页面
+//
+// 在指定位置创建默认文本元素，用户可双击进入编辑模式修改内容。
+// 返回新创建元素的ID，供调用方查找Item并进入编辑模式。
+// ============================================================
+QString EditorScene::addTextElement(const QPointF& pos)
+{
+    TextElementData* text = new TextElementData();
+    text->setId(QUuid::createUuid().toString());
+    text->setName(generateElementName(QStringLiteral("文字")));
+    text->setRect(QRectF(pos, QSizeF(200, 40)));
+    text->setText(QStringLiteral("文字"));
+    text->setTextColor(m_foregroundColor);
+
+    PageElementPtr elem(text);
+    addElement(elem);
+    emit pageModified();
+    return text->id();
+}
+
+// ============================================================
+// 工具模式 - 形状工具按下
+//
+// 记录起始点，创建/重置虚线预览Item。
+// ============================================================
+void EditorScene::handleShapeToolPress(QGraphicsSceneMouseEvent* event)
+{
+    m_toolStartPos = event->scenePos();
+    if (!m_previewItem) {
+        m_previewItem = new QGraphicsPathItem();
+        addItem(m_previewItem);
+    }
+    QPen pen(m_foregroundColor, 1, Qt::DashLine);
+    m_previewItem->setPen(pen);
+    m_previewItem->setBrush(Qt::NoBrush);
+    m_previewItem->setPath(QPainterPath());
+    m_previewItem->show();
+}
+
+// ============================================================
+// 工具模式 - 形状工具移动
+//
+// 根据起始点和当前位置更新预览形状。
+// ============================================================
+void EditorScene::handleShapeToolMove(QGraphicsSceneMouseEvent* event)
+{
+    if (!m_previewItem) return;
+    QRectF rect(m_toolStartPos, event->scenePos());
+    QPainterPath path;
+    switch (m_currentTool) {
+    case ToolRectangle:
+        path.addRect(rect.normalized());
+        break;
+    case ToolRoundedRect:
+        path.addRoundedRect(rect.normalized(), 10, 10);
+        break;
+    case ToolEllipse:
+        path.addEllipse(rect.normalized());
+        break;
+    case ToolLine:
+        path.moveTo(m_toolStartPos);
+        path.lineTo(event->scenePos());
+        break;
+    default:
+        break;
+    }
+    m_previewItem->setPath(path);
+}
+
+// ============================================================
+// 工具模式 - 形状工具释放
+//
+// 隐藏预览，若拖拽距离足够则创建形状元素。
+// ============================================================
+void EditorScene::handleShapeToolRelease(QGraphicsSceneMouseEvent* event)
+{
+    if (m_previewItem) {
+        m_previewItem->hide();
+    }
+    QRectF rect(m_toolStartPos, event->scenePos());
+    rect = rect.normalized();
+    // 忽略过小的拖拽（避免误触创建微小元素）
+    if (rect.width() < 2.0 && rect.height() < 2.0) {
+        return;
+    }
+    addShapeElement(rect);
+}
+
+// ============================================================
+// 工具模式 - 画笔按下
+//
+// 初始化画笔路径，创建/重置预览Item。
+// ============================================================
+void EditorScene::handleBrushToolPress(QGraphicsSceneMouseEvent* event)
+{
+    m_brushPath = QPainterPath();
+    m_brushPath.moveTo(event->scenePos());
+    if (!m_previewItem) {
+        m_previewItem = new QGraphicsPathItem();
+        addItem(m_previewItem);
+    }
+    QPen pen(m_foregroundColor, 2);
+    m_previewItem->setPen(pen);
+    m_previewItem->setBrush(Qt::NoBrush);
+    m_previewItem->setPath(m_brushPath);
+    m_previewItem->show();
+}
+
+// ============================================================
+// 工具模式 - 画笔移动
+//
+// 追加路径点，更新预览。
+// ============================================================
+void EditorScene::handleBrushToolMove(QGraphicsSceneMouseEvent* event)
+{
+    if (!m_previewItem) return;
+    m_brushPath.lineTo(event->scenePos());
+    m_previewItem->setPath(m_brushPath);
+}
+
+// ============================================================
+// 工具模式 - 画笔释放
+//
+// 隐藏预览，若路径有效则创建路径元素。
+// ============================================================
+void EditorScene::handleBrushToolRelease(QGraphicsSceneMouseEvent* event)
+{
+    Q_UNUSED(event);
+    if (m_previewItem) {
+        m_previewItem->hide();
+    }
+    if (m_brushPath.elementCount() < 2) return;
+    addPathElement(m_brushPath);
+}
+
+// ============================================================
+// 工具模式 - 油漆桶
+//
+// 查找点击位置最上层的形状元素，将其填充色改为当前前景色。
+// 使用setElementData原地更新Item，避免重建。
+// ============================================================
+void EditorScene::handlePaintBucketPress(QGraphicsSceneMouseEvent* event)
+{
+    QPointF pos = event->scenePos();
+    // 遍历点击位置的Item（从上到下），找到第一个ShapeEditorItem
+    const QList<QGraphicsItem*> itemList = items(pos);
+    for (QGraphicsItem* gi : itemList) {
+        if (auto* shapeItem = qgraphicsitem_cast<ShapeEditorItem*>(gi)) {
+            // 克隆元素数据，设置填充色
+            ShapeElementData* clone = static_cast<ShapeElementData*>(
+                shapeItem->elementData().constData()->clone());
+            clone->setFillColor(m_foregroundColor);
+            clone->setHasFill(true);
+            // 原地更新Item（不重建，触发syncFromData+update）
+            shapeItem->setElementData(PageElementPtr(clone));
+            emit pageModified();
+            return;
+        }
+    }
+}
+
+// ============================================================
+// 工具模式 - 吸管
+//
+// 将点击位置周围3x3像素区域渲染到QImage，采样中心像素颜色。
+// 更新内部前景色并发射foregroundColorPicked信号通知ToolsPanel。
+// ============================================================
+void EditorScene::handleEyedropperPress(QGraphicsSceneMouseEvent* event)
+{
+    QPointF pos = event->scenePos();
+    const int sz = 3;
+    QImage image(sz, sz, QImage::Format_ARGB32);
+    image.fill(Qt::white);
+    QPainter painter(&image);
+    painter.setRenderHint(QPainter::Antialiasing, false);
+    QRectF sourceRect(pos.x() - 1, pos.y() - 1, sz, sz);
+    QRectF targetRect(0, 0, sz, sz);
+    render(&painter, targetRect, sourceRect, Qt::IgnoreAspectRatio);
+    painter.end();
+    // 采样中心像素
+    QColor picked = image.pixelColor(1, 1);
+    m_foregroundColor = picked;
+    emit foregroundColorPicked(picked);
+}
+
+// ============================================================
+// 工具模式 - 文字工具按下
+//
+// 在点击位置创建默认文本元素，自动选中并进入编辑模式，
+// 然后通知MainWindow切换回选择工具。
+// ============================================================
+void EditorScene::handleTextToolPress(QGraphicsSceneMouseEvent* event)
+{
+    QString elemId = addTextElement(event->scenePos());
+
+    // 查找新创建的TextEditorItem并进入编辑模式
+    const QList<QGraphicsItem*> allItems = items();
+    for (QGraphicsItem* it : allItems) {
+        if (auto* textItem = dynamic_cast<TextEditorItem*>(it)) {
+            if (textItem->elementData().constData()->id() == elemId) {
+                // 选中并进入编辑模式
+                clearSelection();
+                textItem->setSelected(true);
+                updateSelectionDecorator();
+                textItem->startEditing();
+                break;
+            }
+        }
+    }
+
+    // 通知切换回选择工具
+    emit textCreatedAndEditRequested();
 }

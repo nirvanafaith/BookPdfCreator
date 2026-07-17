@@ -13,6 +13,10 @@
 #include <QFontComboBox>
 #include <QButtonGroup>
 #include <QColorDialog>
+#include <QCheckBox>
+#include <QTextEdit>
+#include <QEvent>
+#include <QFocusEvent>
 
 // ============================================================
 // 构造函数
@@ -34,11 +38,22 @@ PropertyPanel::PropertyPanel(QWidget* parent)
     , m_alignCenterBtn(nullptr)
     , m_alignRightBtn(nullptr)
     , m_alignJustifyBtn(nullptr)
+    , m_lineHeightSpin(nullptr)
+    , m_letterSpacingSpin(nullptr)
+    , m_contentEdit(nullptr)
     , m_imageGroup(nullptr)
     , m_opacitySlider(nullptr)
     , m_scaleSlider(nullptr)
     , m_opacityValue(nullptr)
     , m_scaleValue(nullptr)
+    , m_shapeGroup(nullptr)
+    , m_fillCheck(nullptr)
+    , m_fillColorBtn(nullptr)
+    , m_borderColorBtn(nullptr)
+    , m_borderWidthSpin(nullptr)
+    , m_fillWidget(nullptr)
+    , m_currentFillColor(Qt::black)
+    , m_currentBorderColor(Qt::black)
     , m_hintLabel(nullptr)
     , m_currentTextColor(Qt::black)
     , m_updating(false)
@@ -125,6 +140,15 @@ void PropertyPanel::setupUi()
     m_textGroup = new QGroupBox(QStringLiteral("文本"), this);
     QFormLayout* textLayout = new QFormLayout(m_textGroup);
 
+    // 内容编辑框（多行文本，固定高度，垂直滚动条）
+    m_contentEdit = new QTextEdit(m_textGroup);
+    m_contentEdit->setFixedHeight(80);
+    m_contentEdit->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    m_contentEdit->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    m_contentEdit->setAcceptRichText(false);
+    m_contentEdit->setPlaceholderText(QStringLiteral("输入文本内容..."));
+    textLayout->addRow(QStringLiteral("内容:"), m_contentEdit);
+
     // 字体选择
     m_fontCombo = new QFontComboBox(m_textGroup);
     textLayout->addRow(QStringLiteral("字体:"), m_fontCombo);
@@ -183,6 +207,26 @@ void PropertyPanel::setupUi()
     m_alignGroup->addButton(m_alignRightBtn, static_cast<int>(Qt::AlignRight));
     m_alignGroup->addButton(m_alignJustifyBtn, static_cast<int>(Qt::AlignJustify));
 
+    // 行间距：0=自动，0.1-100像素
+    m_lineHeightSpin = new QDoubleSpinBox(m_textGroup);
+    m_lineHeightSpin->setRange(0.0, 100.0);
+    m_lineHeightSpin->setDecimals(1);
+    m_lineHeightSpin->setSingleStep(0.5);
+    m_lineHeightSpin->setValue(0.0);
+    m_lineHeightSpin->setSuffix(QStringLiteral(" px"));
+    m_lineHeightSpin->setSpecialValueText(QStringLiteral("自动"));  // 0显示为"自动"
+    textLayout->addRow(QStringLiteral("行间距:"), m_lineHeightSpin);
+
+    // 字间距：0=默认，-50~200百分比偏移
+    m_letterSpacingSpin = new QDoubleSpinBox(m_textGroup);
+    m_letterSpacingSpin->setRange(-50.0, 200.0);
+    m_letterSpacingSpin->setDecimals(1);
+    m_letterSpacingSpin->setSingleStep(1.0);
+    m_letterSpacingSpin->setValue(0.0);
+    m_letterSpacingSpin->setSuffix(QStringLiteral("%"));
+    m_letterSpacingSpin->setSpecialValueText(QStringLiteral("默认"));  // 0显示为"默认"
+    textLayout->addRow(QStringLiteral("字间距:"), m_letterSpacingSpin);
+
     mainLayout->addWidget(m_textGroup);
 
     // ============================================================
@@ -235,6 +279,50 @@ void PropertyPanel::setupUi()
 
     mainLayout->addWidget(m_imageGroup);
 
+    // ============================================================
+    // 形状属性组
+    // ============================================================
+    m_shapeGroup = new QGroupBox(QStringLiteral("形状"), this);
+    QFormLayout* shapeLayout = new QFormLayout(m_shapeGroup);
+
+    // 填充勾选（独占一行）
+    m_fillCheck = new QCheckBox(QStringLiteral("填充颜色"), m_shapeGroup);
+    shapeLayout->addRow(m_fillCheck);
+
+    // 填充色 - 用容器widget方便整体隐藏（label+button）
+    m_fillWidget = new QWidget(m_shapeGroup);
+    QHBoxLayout* fillLayout = new QHBoxLayout(m_fillWidget);
+    fillLayout->setContentsMargins(0, 0, 0, 0);
+    fillLayout->setSpacing(4);
+    QLabel* fillLabel = new QLabel(QStringLiteral("填充色:"), m_fillWidget);
+    m_fillColorBtn = new QPushButton(m_fillWidget);
+    m_fillColorBtn->setMinimumHeight(24);
+    fillLayout->addWidget(fillLabel);
+    fillLayout->addWidget(m_fillColorBtn);
+    shapeLayout->addRow(m_fillWidget);
+
+    // 边框色 - 用容器widget保持布局一致
+    QWidget* borderWidget = new QWidget(m_shapeGroup);
+    QHBoxLayout* borderLayout = new QHBoxLayout(borderWidget);
+    borderLayout->setContentsMargins(0, 0, 0, 0);
+    borderLayout->setSpacing(4);
+    QLabel* borderLabel = new QLabel(QStringLiteral("边框色:"), borderWidget);
+    m_borderColorBtn = new QPushButton(borderWidget);
+    m_borderColorBtn->setMinimumHeight(24);
+    borderLayout->addWidget(borderLabel);
+    borderLayout->addWidget(m_borderColorBtn);
+    shapeLayout->addRow(borderWidget);
+
+    // 边框磅数：范围0.5~20.0，精度0.5，单位"磅"
+    m_borderWidthSpin = new QDoubleSpinBox(m_shapeGroup);
+    m_borderWidthSpin->setRange(0.5, 20.0);
+    m_borderWidthSpin->setDecimals(1);
+    m_borderWidthSpin->setSingleStep(0.5);
+    m_borderWidthSpin->setSuffix(QStringLiteral(" 磅"));
+    shapeLayout->addRow(QStringLiteral("边框粗细:"), m_borderWidthSpin);
+
+    mainLayout->addWidget(m_shapeGroup);
+
     // 弹性空间填充底部
     mainLayout->addStretch();
 
@@ -243,6 +331,22 @@ void PropertyPanel::setupUi()
 
     // 初始化颜色按钮外观
     updateColorButton();
+    updateShapeColorButtons();
+
+    // 设置内容编辑框的事件过滤器
+    setupContentEditConnections();
+}
+
+// ============================================================
+// setupContentEditConnections - 设置内容编辑框的连接
+//
+// 安装事件过滤器以检测QTextEdit失去焦点事件，
+// 在失去焦点时发射textContentChanged信号。
+// ============================================================
+void PropertyPanel::setupContentEditConnections()
+{
+    // 安装事件过滤器以检测QTextEdit失去焦点
+    m_contentEdit->installEventFilter(this);
 }
 
 // ============================================================
@@ -321,6 +425,18 @@ void PropertyPanel::setupConnections()
         emit alignmentChanged(m_currentElementId, static_cast<Qt::AlignmentFlag>(id));
     });
 
+    // ---- 文本属性：行间距 ----
+    connect(m_lineHeightSpin, &QDoubleSpinBox::editingFinished, this, [this]() {
+        if (m_updating || m_currentElementId.isEmpty()) return;
+        emit lineHeightChanged(m_currentElementId, m_lineHeightSpin->value());
+    });
+
+    // ---- 文本属性：字间距 ----
+    connect(m_letterSpacingSpin, &QDoubleSpinBox::editingFinished, this, [this]() {
+        if (m_updating || m_currentElementId.isEmpty()) return;
+        emit letterSpacingChanged(m_currentElementId, m_letterSpacingSpin->value());
+    });
+
     // ---- 图片属性：不透明度 ----
     connect(m_opacitySlider, &QSlider::valueChanged, this, [this](int value) {
         m_opacityValue->setValue(value);
@@ -351,6 +467,45 @@ void PropertyPanel::setupConnections()
         m_scaleSlider->setValue(value);
         m_scaleSlider->blockSignals(false);
         emit scaleFactorChanged(m_currentElementId, value / 100.0);
+    });
+
+    // ---- 形状属性：填充勾选 ----
+    connect(m_fillCheck, &QCheckBox::toggled, this, [this](bool checked) {
+        m_fillColorBtn->setEnabled(checked);
+        if (m_updating || m_currentElementId.isEmpty()) return;
+        emit fillEnabledChanged(m_currentElementId, checked);
+    });
+
+    // ---- 形状属性：填充色 ----
+    connect(m_fillColorBtn, &QPushButton::clicked, this, [this]() {
+        if (m_currentElementId.isEmpty()) return;
+        QColor newColor = QColorDialog::getColor(m_currentFillColor, this, QStringLiteral("选择填充颜色"));
+        if (newColor.isValid()) {
+            m_currentFillColor = newColor;
+            updateShapeColorButtons();
+            if (!m_updating) {
+                emit fillColorChanged(m_currentElementId, m_currentFillColor);
+            }
+        }
+    });
+
+    // ---- 形状属性：边框色 ----
+    connect(m_borderColorBtn, &QPushButton::clicked, this, [this]() {
+        if (m_currentElementId.isEmpty()) return;
+        QColor newColor = QColorDialog::getColor(m_currentBorderColor, this, QStringLiteral("选择边框颜色"));
+        if (newColor.isValid()) {
+            m_currentBorderColor = newColor;
+            updateShapeColorButtons();
+            if (!m_updating) {
+                emit borderColorChanged(m_currentElementId, m_currentBorderColor);
+            }
+        }
+    });
+
+    // ---- 形状属性：边框磅数 ----
+    connect(m_borderWidthSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double value) {
+        if (m_updating || m_currentElementId.isEmpty()) return;
+        emit borderWidthChanged(m_currentElementId, value);
     });
 }
 
@@ -384,11 +539,15 @@ void PropertyPanel::showElementProperties(const PageElementPtr& element)
     PageElementData::ElementType type = element->elementType();
     showTextGroup(type == PageElementData::Text);
     showImageGroup(type == PageElementData::Image);
+    showShapeGroup(type == PageElementData::Shape);
 
     // ---- 填充文本属性 ----
     if (type == PageElementData::Text) {
         const TextElementData* textElem =
             static_cast<const TextElementData*>(element.constData());
+
+        // 文本内容
+        m_contentEdit->setPlainText(textElem->text());
 
         // 字体
         QFont font = textElem->font();
@@ -417,6 +576,12 @@ void PropertyPanel::showElementProperties(const PageElementPtr& element)
         } else {
             m_alignLeftBtn->setChecked(true);  // 兜底
         }
+
+        // 行间距
+        m_lineHeightSpin->setValue(textElem->lineHeight());
+
+        // 字间距
+        m_letterSpacingSpin->setValue(textElem->letterSpacing());
     }
 
     // ---- 填充图片属性 ----
@@ -435,6 +600,35 @@ void PropertyPanel::showElementProperties(const PageElementPtr& element)
         scalePercent = qBound(10, scalePercent, 500);
         m_scaleSlider->setValue(scalePercent);
         m_scaleValue->setValue(scalePercent);
+    }
+
+    // ---- 填充形状属性 ----
+    if (type == PageElementData::Shape) {
+        const ShapeElementData* shapeElem =
+            static_cast<const ShapeElementData*>(element.constData());
+
+        // 根据形状类型控制填充控件的显示：
+        // Line/Path 始终无填充，隐藏填充勾选和填充色按钮
+        ShapeElementData::ShapeType shapeType = shapeElem->shapeType();
+        bool canFill = (shapeType != ShapeElementData::Line &&
+                        shapeType != ShapeElementData::Path);
+        m_fillCheck->setVisible(canFill);
+        m_fillWidget->setVisible(canFill);
+
+        // 填充勾选
+        m_fillCheck->setChecked(shapeElem->hasFill());
+
+        // 填充色
+        m_currentFillColor = shapeElem->fillColor();
+        m_fillColorBtn->setEnabled(shapeElem->hasFill());
+
+        // 边框色
+        m_currentBorderColor = shapeElem->borderColor();
+
+        // 边框磅数
+        m_borderWidthSpin->setValue(shapeElem->borderWidth());
+
+        updateShapeColorButtons();
     }
 
     // ---- 显示属性组，隐藏提示 ----
@@ -456,7 +650,11 @@ void PropertyPanel::clearProperties()
     m_transformGroup->hide();
     m_textGroup->hide();
     m_imageGroup->hide();
+    m_shapeGroup->hide();
     m_hintLabel->show();
+    if (m_contentEdit) {
+        m_contentEdit->clear();
+    }
     m_updating = false;
 }
 
@@ -477,6 +675,14 @@ void PropertyPanel::showImageGroup(bool show)
 }
 
 // ============================================================
+// showShapeGroup - 显示/隐藏形状属性组
+// ============================================================
+void PropertyPanel::showShapeGroup(bool show)
+{
+    m_shapeGroup->setVisible(show);
+}
+
+// ============================================================
 // updateColorButton - 更新颜色按钮外观
 //
 // 将按钮背景色设为当前文字颜色，便于用户直观识别。
@@ -491,4 +697,41 @@ void PropertyPanel::updateColorButton()
         m_textColorBtn->setStyleSheet(
             QString::fromUtf8("background-color: #000000; border: 1px solid #999;"));
     }
+}
+
+// ============================================================
+// updateShapeColorButtons - 更新形状颜色按钮外观
+//
+// 将填充色和边框色按钮的背景设为对应颜色，便于直观识别。
+// ============================================================
+void PropertyPanel::updateShapeColorButtons()
+{
+    if (m_currentFillColor.isValid()) {
+        m_fillColorBtn->setStyleSheet(
+            QString::fromUtf8("background-color: %1; border: 2px solid #888; border-radius: 3px;")
+                .arg(m_currentFillColor.name()));
+    }
+    if (m_currentBorderColor.isValid()) {
+        m_borderColorBtn->setStyleSheet(
+            QString::fromUtf8("background-color: %1; border: 2px solid #888; border-radius: 3px;")
+                .arg(m_currentBorderColor.name()));
+    }
+}
+
+// ============================================================
+// eventFilter - 事件过滤器
+//
+// 监听m_contentEdit的焦点丢失事件，在失去焦点时发射
+// textContentChanged信号，通知MainWindow更新文本元素内容。
+// 使用m_updating标志避免在程序化填充时触发信号。
+// ============================================================
+bool PropertyPanel::eventFilter(QObject* watched, QEvent* event)
+{
+    if (watched == m_contentEdit && event->type() == QEvent::FocusOut) {
+        if (!m_updating && !m_currentElementId.isEmpty()) {
+            QString newText = m_contentEdit->toPlainText();
+            emit textContentChanged(m_currentElementId, newText);
+        }
+    }
+    return QWidget::eventFilter(watched, event);
 }

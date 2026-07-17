@@ -21,6 +21,8 @@
 #include <QFile>
 #include <QUuid>
 #include <QFileInfo>
+#include <QUrl>
+#include <QMimeData>
 #include <QtGlobal>
 #include <QtMath>
 
@@ -112,11 +114,11 @@ void EditorView::setLayoutEngine(LayoutEnginePtr engine)
 // 对页码进行边界约束后转发给场景的loadPage，
 // 并发射currentPageChanged信号。
 // ============================================================
-void EditorView::setCurrentPage(int page)
+void EditorView::setCurrentPage(int page, bool forceReload)
 {
     int maxPage = pageCount() - 1;
     int newPage = qBound(0, page, qMax(0, maxPage));
-    if (newPage != currentPage()) {
+    if (forceReload || newPage != currentPage()) {
         m_scene->loadPage(newPage);
         emit currentPageChanged(newPage);
     }
@@ -356,6 +358,10 @@ void EditorView::mouseMoveEvent(QMouseEvent* event)
 void EditorView::keyPressEvent(QKeyEvent* event)
 {
     if (event->key() == Qt::Key_Space && !event->isAutoRepeat()) {
+        if (m_scene && m_scene->focusItem()) {
+            QGraphicsView::keyPressEvent(event);
+            return;
+        }
         m_spacePressed = true;
         setCursor(Qt::OpenHandCursor);
         event->accept();
@@ -372,6 +378,10 @@ void EditorView::keyPressEvent(QKeyEvent* event)
 void EditorView::keyReleaseEvent(QKeyEvent* event)
 {
     if (event->key() == Qt::Key_Space && !event->isAutoRepeat()) {
+        if (m_scene && m_scene->focusItem()) {
+            QGraphicsView::keyReleaseEvent(event);
+            return;
+        }
         m_spacePressed = false;
         m_isPanning = false;
         unsetCursor();
@@ -402,59 +412,106 @@ void EditorView::resizeEvent(QResizeEvent* event)
 // ============================================================
 void EditorView::dragEnterEvent(QDragEnterEvent* event)
 {
-    // 检查是否是素材拖拽
-    if (event->mimeData()->hasFormat("application/x-bookpdf-asset")) {
+    const QMimeData* mime = event->mimeData();
+    // 1. 接受自定义素材MIME
+    if (mime->hasFormat("application/x-bookpdf-asset")) {
         event->acceptProposedAction();
-    } else {
-        event->ignore();
+        return;
     }
+    // 2. 接受外部图片文件URL拖入
+    if (mime->hasUrls()) {
+        for (const QUrl& url : mime->urls()) {
+            if (url.isLocalFile() && isImageFile(url.toLocalFile())) {
+                event->acceptProposedAction();
+                return;
+            }
+        }
+    }
+    event->ignore();
 }
 
 void EditorView::dragMoveEvent(QDragMoveEvent* event)
 {
-    if (event->mimeData()->hasFormat("application/x-bookpdf-asset")) {
+    const QMimeData* mime = event->mimeData();
+    // 1. 接受自定义素材MIME
+    if (mime->hasFormat("application/x-bookpdf-asset")) {
         event->acceptProposedAction();
-    } else {
-        event->ignore();
+        return;
     }
+    // 2. 接受外部图片文件URL拖入
+    if (mime->hasUrls()) {
+        for (const QUrl& url : mime->urls()) {
+            if (url.isLocalFile() && isImageFile(url.toLocalFile())) {
+                event->acceptProposedAction();
+                return;
+            }
+        }
+    }
+    event->ignore();
 }
 
 void EditorView::dropEvent(QDropEvent* event)
 {
-    if (!event->mimeData()->hasFormat("application/x-bookpdf-asset")) {
-        event->ignore();
+    const QMimeData* mime = event->mimeData();
+
+    // 1. 优先处理自定义素材MIME
+    if (mime->hasFormat("application/x-bookpdf-asset")) {
+        // 获取MIME数据（同进程拖拽，AssetMimeData对象直接传递）
+        const AssetMimeData* mimeData = qobject_cast<const AssetMimeData*>(mime);
+        if (!mimeData) {
+            event->ignore();
+            return;
+        }
+
+        // 计算放置位置（view视口坐标转scene页面坐标）
+        QPointF dropPos = mapToScene(event->pos());
+
+        EditorScene* scene = editorScene();
+        if (!scene) {
+            event->ignore();
+            return;
+        }
+
+        switch (mimeData->assetType) {
+        case ImageAsset:
+            createImageElement(scene, mimeData->imagePath, dropPos);
+            break;
+        case TextAsset:
+            createTextElement(scene, mimeData->textContent, mimeData->textLabel, dropPos);
+            break;
+        case TxtFileAsset:
+            createTextFromTxtFile(scene, mimeData->txtFilePath, dropPos);
+            break;
+        }
+
+        event->acceptProposedAction();
         return;
     }
 
-    // 获取MIME数据（同进程拖拽，AssetMimeData对象直接传递）
-    const AssetMimeData* mimeData = qobject_cast<const AssetMimeData*>(event->mimeData());
-    if (!mimeData) {
-        event->ignore();
-        return;
+    // 2. 处理外部图片文件URL
+    if (mime->hasUrls()) {
+        QPointF dropPos = mapToScene(event->pos());
+        EditorScene* scene = editorScene();
+        if (!scene) {
+            event->ignore();
+            return;
+        }
+        bool anyAccepted = false;
+        for (const QUrl& url : mime->urls()) {
+            if (url.isLocalFile() && isImageFile(url.toLocalFile())) {
+                createImageElement(scene, url.toLocalFile(), dropPos);
+                anyAccepted = true;
+                // 多个图片堆叠偏移
+                dropPos += QPointF(20, 20);
+            }
+        }
+        if (anyAccepted) {
+            event->acceptProposedAction();
+            return;
+        }
     }
 
-    // 计算放置位置（view视口坐标转scene页面坐标）
-    QPointF dropPos = mapToScene(event->pos());
-
-    EditorScene* scene = editorScene();
-    if (!scene) {
-        event->ignore();
-        return;
-    }
-
-    switch (mimeData->assetType) {
-    case ImageAsset:
-        createImageElement(scene, mimeData->imagePath, dropPos);
-        break;
-    case TextAsset:
-        createTextElement(scene, mimeData->textContent, mimeData->textLabel, dropPos);
-        break;
-    case TxtFileAsset:
-        createTextFromTxtFile(scene, mimeData->txtFilePath, dropPos);
-        break;
-    }
-
-    event->acceptProposedAction();
+    event->ignore();
 }
 
 // ============================================================
@@ -526,7 +583,19 @@ void EditorView::createTextElement(EditorScene* scene, const QString& text,
     textElem->setTextColor(QColor(0, 0, 0));  // 黑色
     textElem->setAlignment(Qt::AlignLeft | Qt::AlignTop);
     textElem->setRect(QRectF(pos.x(), pos.y(), width, height));
-    textElem->setName(label);
+    // 使用文本内容作为元素名称（截断到30字符避免图层名称过长）
+    QString elementName = text;
+    if (elementName.length() > 30) {
+        elementName = elementName.left(30) + QString::fromUtf8("...");
+    }
+    // 移除换行符，避免图层名称显示异常
+    elementName.replace(QChar('\n'), QChar(' '));
+    elementName.replace(QChar('\r'), QChar(' '));
+    elementName = elementName.trimmed();
+    if (elementName.isEmpty()) {
+        elementName = label;  // 兜底：文本为空时使用标签
+    }
+    textElem->setName(elementName);
     textElem->setId(QUuid::createUuid().toString());
 
     // 通过EditorScene添加（入撤销栈）
@@ -556,4 +625,23 @@ void EditorView::createTextFromTxtFile(EditorScene* scene, const QString& filePa
 
     QFileInfo info(filePath);
     createTextElement(scene, content, info.baseName(), pos);
+}
+
+// ============================================================
+// isImageFile - 判断文件是否为Qt支持的图片格式
+//
+// 通过比对文件后缀与 QImageReader::supportedImageFormats()
+// 返回的支持列表（仅本地文件后缀匹配，不读取文件头），
+// 用于过滤从系统文件管理器拖入的外部文件。
+// ============================================================
+bool EditorView::isImageFile(const QString& filePath) const
+{
+    static const QList<QByteArray> supportedFormats = QImageReader::supportedImageFormats();
+    QString suffix = QFileInfo(filePath).suffix().toLower();
+    for (const QByteArray& fmt : supportedFormats) {
+        if (QString::fromUtf8(fmt).toLower() == suffix) {
+            return true;
+        }
+    }
+    return false;
 }

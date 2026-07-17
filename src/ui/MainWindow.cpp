@@ -11,6 +11,8 @@
 #include "layout/AutoLayoutDetector.h"
 #include "layout/LayoutConstants.h"
 #include "ui/PaperSizeDialog.h"
+#include "ui/LayoutLibraryWidget.h"
+#include "ui/FixedAssetWidget.h"
 #include "parsers/ExcelParser.h"
 #include "parsers/ImageFinder.h"
 #include "parsers/ImageCache.h"
@@ -20,6 +22,8 @@
 #include <QToolBar>
 #include <QStatusBar>
 #include <QSplitter>
+#include <QTabWidget>
+#include <QHBoxLayout>
 #include <QComboBox>
 #include <QFileDialog>
 #include <QMessageBox>
@@ -46,6 +50,7 @@
 #include <QMenu>
 #include <QSettings>
 #include <QKeyEvent>
+#include <QSignalBlocker>
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent),
@@ -69,6 +74,8 @@ MainWindow::MainWindow(QWidget *parent)
       m_snapToggleAction(nullptr),
       m_splitter(nullptr),
       m_assetTree(nullptr),
+      m_fixedAssetWidget(nullptr),
+      m_layoutLibrary(nullptr),
       m_editorView(nullptr),
       m_layoutCombo(nullptr),
       m_zoomCombo(nullptr),
@@ -192,8 +199,10 @@ void MainWindow::createMenus()
     m_editMenu->addAction(copyAction);
 
     // 删除（Delete）：向编辑器视图投递按键事件
+    // 注意：不设置 QKeySequence::Delete 快捷键，否则 Delete 键会在应用层被拦截，
+    // 导致原始按键事件无法到达 EditorScene。改由 EditorView 的 keyPressEvent
+    // 自然转发给场景处理；菜单点击时仍通过合成事件作为兜底。
     QAction* deleteAction = new QAction(tr("删除(&Del)"), this);
-    deleteAction->setShortcut(QKeySequence::Delete);
     deleteAction->setStatusTip(tr("删除选中元素"));
     connect(deleteAction, &QAction::triggered, this, [this]() {
         if (m_editorView) {
@@ -276,19 +285,48 @@ void MainWindow::createCentralWidget()
 {
     m_splitter = new QSplitter(Qt::Horizontal, this);
 
-    // 创建素材树组件（替代原QListWidget书列表）
+    // 创建左侧标签页容器
+    m_leftTabWidget = new QTabWidget(this);
+    m_leftTabWidget->setMinimumWidth(200);
+    m_leftTabWidget->setMaximumWidth(350);
+
+    // 可变素材标签页 (原"素材")
     m_assetTree = new AssetTreeWidget(this);
-    m_assetTree->setMinimumWidth(200);
-    m_assetTree->setMaximumWidth(350);
-    // 连接勾选信号（替代原QListWidget::itemChanged）
     connect(m_assetTree, &AssetTreeWidget::bookCheckChanged,
             this, &MainWindow::onBookItemChanged);
+    m_leftTabWidget->addTab(m_assetTree, tr("可变素材"));
 
-    // 创建编辑器视图（替代原有的PdfPreviewWidget）
+    // 固定素材标签页
+    m_fixedAssetWidget = new FixedAssetWidget(this);
+    m_leftTabWidget->addTab(m_fixedAssetWidget, tr("固定素材"));
+
+    // 版式标签页
+    m_layoutLibrary = new LayoutLibraryWidget(this);
+    connect(m_layoutLibrary, &LayoutLibraryWidget::layoutSelected,
+            this, &MainWindow::onLayoutSelected);
+    m_leftTabWidget->addTab(m_layoutLibrary, tr("版式"));
+
+    // 工具面板（迁移到顶部编辑工具栏，此处仅创建实例作为状态管理器）
+    m_toolsPanel = new ToolsPanel(this);
+
+    // 切换到可变素材(0)或固定素材(1)时重置为选择工具
+    connect(m_leftTabWidget, &QTabWidget::currentChanged, this, [this](int index) {
+        // 切换到可变素材(0)或固定素材(1)时重置为选择工具
+        if (index == 0 || index == 1) {
+            if (m_editorView && m_editorView->editorScene()) {
+                m_editorView->editorScene()->setCurrentTool(ToolSelect);
+            }
+            if (m_toolsPanel) {
+                m_toolsPanel->selectTool(ToolSelect);
+            }
+        }
+    });
+
+    // 创建编辑器视图
     m_editorView = new EditorView(this);
     connect(m_editorView, &EditorView::currentPageChanged, this, &MainWindow::onPreviewPageChanged);
 
-    m_splitter->addWidget(m_assetTree);
+    m_splitter->addWidget(m_leftTabWidget);
     m_splitter->addWidget(m_editorView);
     m_splitter->setStretchFactor(0, 0);
     m_splitter->setStretchFactor(1, 1);
@@ -396,6 +434,50 @@ void MainWindow::createEditToolBar()
     connect(a5Action, &QAction::triggered, this, [this]() { changePaperSize(PAPER_A5); });
     connect(a3Action, &QAction::triggered, this, [this]() { changePaperSize(PAPER_A3); });
     connect(customAction, &QAction::triggered, this, &MainWindow::onCustomPaper);
+
+    // ---- 工具栏第二行：编辑工具 ----
+    // 将ToolsPanel从左侧标签页迁移到顶部工具栏
+    QToolBar* toolsToolBar = addToolBar(tr("工具"));
+    toolsToolBar->setObjectName("ToolsToolBar");
+    toolsToolBar->setMovable(false);
+
+    // 调整ToolsPanel为水平布局以适应工具栏（不修改ToolsPanel源文件，仅运行时调整实例）
+    if (QLayout* oldLayout = m_toolsPanel->layout()) {
+        QList<QWidget*> widgets;
+        while (oldLayout->count() > 0) {
+            QLayoutItem* item = oldLayout->takeAt(0);
+            if (QWidget* w = item->widget()) {
+                widgets.append(w);
+            }
+            delete item;
+        }
+        delete oldLayout;
+
+        QHBoxLayout* hlayout = new QHBoxLayout();
+        hlayout->setContentsMargins(2, 2, 2, 2);
+        hlayout->setSpacing(2);
+        for (QWidget* w : widgets) {
+            hlayout->addWidget(w);
+        }
+        m_toolsPanel->setLayout(hlayout);
+        m_toolsPanel->setMinimumWidth(0);
+        m_toolsPanel->setMaximumWidth(QWIDGETSIZE_MAX);
+    }
+
+    // 缩小工具按钮尺寸以适应工具栏（原为96x96）
+    const QSize toolbarBtnSize(32, 32);
+    const QSize toolbarIconSize(24, 24);
+    for (QToolButton* btn : m_toolsPanel->findChildren<QToolButton*>()) {
+        btn->setFixedSize(toolbarBtnSize);
+        btn->setIconSize(toolbarIconSize);
+    }
+
+    // 缩小前景色按钮（原为84x84）
+    for (QPushButton* btn : m_toolsPanel->findChildren<QPushButton*>()) {
+        btn->setFixedSize(28, 28);
+    }
+
+    toolsToolBar->addWidget(m_toolsPanel);
 }
 
 // ============================================================
@@ -538,6 +620,14 @@ void MainWindow::connectSignals()
         }
     });
 
+    // 图层重命名：双击图层条目名称编辑后提交
+    connect(m_layerPanel, &LayerPanel::layerRenamed,
+            this, [this](const QString& elementId, const QString& newName) {
+        updateElementInPlace(elementId, [newName](PageElementData* elem) {
+            elem->setName(newName);
+        });
+    });
+
     // ---- 属性面板信号 ----
     connect(m_propertyPanel, &PropertyPanel::positionChanged,
             this, &MainWindow::onElementMoved);
@@ -574,11 +664,65 @@ void MainWindow::connectSignals()
             }
         });
     });
+    // 文本内容变更（属性面板直接编辑文本）
+    connect(m_propertyPanel, &PropertyPanel::textContentChanged,
+            this, [this](const QString& elementId, const QString& newText) {
+        if (!m_editorView || !m_editorView->editorScene()) return;
+        EditorScene* scene = m_editorView->editorScene();
+
+        // 从场景中查找元素，获取旧文本
+        QString oldText;
+        bool found = false;
+        const QList<QGraphicsItem*> allItems = scene->items();
+        for (QGraphicsItem* it : allItems) {
+            auto* baseItem = dynamic_cast<BaseEditorItem*>(it);
+            if (baseItem && baseItem->elementData().constData()->id() == elementId) {
+                if (baseItem->elementData().constData()->elementType() == PageElementData::Text) {
+                    const TextElementData* textElem =
+                        static_cast<const TextElementData*>(baseItem->elementData().constData());
+                    oldText = textElem->text();
+                    found = true;
+                }
+                break;
+            }
+        }
+
+        if (!found) return;
+
+        // 文本未变化时不提交命令（避免无意义的撤销记录）
+        if (oldText == newText) return;
+
+        // 通过TextEditCommand入撤销栈
+        // redo()会自动clone元素数据、设置新文本、删除旧Item、创建新Item
+        if (scene->undoStack()) {
+            scene->undoStack()->push(new TextEditCommand(scene, elementId, oldText, newText));
+        }
+    });
     connect(m_propertyPanel, &PropertyPanel::alignmentChanged,
             this, [this](const QString& elementId, Qt::Alignment align) {
         updateElementInPlace(elementId, [align](PageElementData* elem) {
             if (elem->elementType() == PageElementData::Text) {
                 static_cast<TextElementData*>(elem)->setAlignment(align);
+            }
+        });
+    });
+
+    // 行间距变更
+    connect(m_propertyPanel, &PropertyPanel::lineHeightChanged,
+            this, [this](const QString& elementId, qreal height) {
+        updateElementInPlace(elementId, [height](PageElementData* elem) {
+            if (elem->elementType() == PageElementData::Text) {
+                static_cast<TextElementData*>(elem)->setLineHeight(height);
+            }
+        });
+    });
+
+    // 字间距变更
+    connect(m_propertyPanel, &PropertyPanel::letterSpacingChanged,
+            this, [this](const QString& elementId, qreal spacing) {
+        updateElementInPlace(elementId, [spacing](PageElementData* elem) {
+            if (elem->elementType() == PageElementData::Text) {
+                static_cast<TextElementData*>(elem)->setLetterSpacing(spacing);
             }
         });
     });
@@ -599,6 +743,122 @@ void MainWindow::connectSignals()
                 static_cast<ImageElementData*>(elem)->setScaleFactor(scale);
             }
         });
+    });
+
+    // ---- 形状属性信号 ----
+    connect(m_propertyPanel, &PropertyPanel::fillEnabledChanged,
+            this, [this](const QString& elementId, bool enabled) {
+        if (!m_editorView || !m_editorView->editorScene()) return;
+        const QList<BaseEditorItem*> items = m_editorView->editorScene()->selectedEditorItems();
+        for (BaseEditorItem* item : items) {
+            if (item->elementData().constData()->id() == elementId) {
+                if (auto* shapeItem = qgraphicsitem_cast<ShapeEditorItem*>(item)) {
+                    ShapeElementData* clone = static_cast<ShapeElementData*>(
+                        shapeItem->elementData().constData()->clone());
+                    clone->setHasFill(enabled);
+                    shapeItem->setElementData(PageElementPtr(clone));
+                    shapeItem->update();
+                    emit m_editorView->editorScene()->pageModified();
+                }
+                break;
+            }
+        }
+    });
+
+    connect(m_propertyPanel, &PropertyPanel::fillColorChanged,
+            this, [this](const QString& elementId, const QColor& color) {
+        if (!m_editorView || !m_editorView->editorScene()) return;
+        const QList<BaseEditorItem*> items = m_editorView->editorScene()->selectedEditorItems();
+        for (BaseEditorItem* item : items) {
+            if (item->elementData().constData()->id() == elementId) {
+                if (auto* shapeItem = qgraphicsitem_cast<ShapeEditorItem*>(item)) {
+                    ShapeElementData* clone = static_cast<ShapeElementData*>(
+                        shapeItem->elementData().constData()->clone());
+                    clone->setFillColor(color);
+                    clone->setHasFill(true);
+                    shapeItem->setElementData(PageElementPtr(clone));
+                    shapeItem->update();
+                    emit m_editorView->editorScene()->pageModified();
+                }
+                break;
+            }
+        }
+    });
+
+    connect(m_propertyPanel, &PropertyPanel::borderColorChanged,
+            this, [this](const QString& elementId, const QColor& color) {
+        if (!m_editorView || !m_editorView->editorScene()) return;
+        const QList<BaseEditorItem*> items = m_editorView->editorScene()->selectedEditorItems();
+        for (BaseEditorItem* item : items) {
+            if (item->elementData().constData()->id() == elementId) {
+                if (auto* shapeItem = qgraphicsitem_cast<ShapeEditorItem*>(item)) {
+                    ShapeElementData* clone = static_cast<ShapeElementData*>(
+                        shapeItem->elementData().constData()->clone());
+                    clone->setBorderColor(color);
+                    clone->setHasBorder(true);
+                    shapeItem->setElementData(PageElementPtr(clone));
+                    shapeItem->update();
+                    emit m_editorView->editorScene()->pageModified();
+                }
+                break;
+            }
+        }
+    });
+
+    connect(m_propertyPanel, &PropertyPanel::borderWidthChanged,
+            this, [this](const QString& elementId, qreal width) {
+        if (!m_editorView || !m_editorView->editorScene()) return;
+        const QList<BaseEditorItem*> items = m_editorView->editorScene()->selectedEditorItems();
+        for (BaseEditorItem* item : items) {
+            if (item->elementData().constData()->id() == elementId) {
+                if (auto* shapeItem = qgraphicsitem_cast<ShapeEditorItem*>(item)) {
+                    ShapeElementData* clone = static_cast<ShapeElementData*>(
+                        shapeItem->elementData().constData()->clone());
+                    clone->setBorderWidth(width);
+                    clone->setHasBorder(true);
+                    shapeItem->setElementData(PageElementPtr(clone));
+                    shapeItem->update();
+                    emit m_editorView->editorScene()->pageModified();
+                }
+                break;
+            }
+        }
+    });
+
+    // ---- 工具面板信号 ----
+    connect(m_toolsPanel, &ToolsPanel::toolChanged,
+            this, [this](int tool) {
+        if (m_editorView && m_editorView->editorScene()) {
+            m_editorView->editorScene()->setCurrentTool(tool);
+            // 切换到非选择工具时清除选择
+            if (tool != ToolSelect) {
+                m_editorView->editorScene()->clearSelection();
+            }
+        }
+    });
+
+    connect(m_toolsPanel, &ToolsPanel::foregroundColorChanged,
+            this, [this](const QColor& color) {
+        if (m_editorView && m_editorView->editorScene()) {
+            m_editorView->editorScene()->setForegroundColor(color);
+        }
+    });
+
+    // 吸管拾取颜色后更新工具面板前景色按钮
+    connect(m_editorView->editorScene(), &EditorScene::foregroundColorPicked,
+            this, [this](const QColor& color) {
+        m_toolsPanel->setForegroundColor(color);
+    });
+
+    // 文本工具创建文本元素并进入编辑模式后，切换回选择工具
+    connect(m_editorView->editorScene(), &EditorScene::textCreatedAndEditRequested,
+            this, [this]() {
+        if (m_toolsPanel) {
+            m_toolsPanel->selectTool(ToolSelect);
+        }
+        if (m_editorView && m_editorView->editorScene()) {
+            m_editorView->editorScene()->setCurrentTool(ToolSelect);
+        }
     });
 
     // ---- 文本格式化工具栏信号 ----
@@ -721,7 +981,7 @@ void MainWindow::recalculateLayout()
         }
 
         m_editorView->setLayoutEngine(m_layoutEngine);
-        m_editorView->setCurrentPage(0);
+        m_editorView->setCurrentPage(0, true);  // forceReload=true 确保新引擎元素被加载
         m_editorView->fitToWindow();
         m_currentPage = 0;
     }
@@ -960,10 +1220,19 @@ void MainWindow::onOpenFile()
         m_sourcePath = filePath;
 
         updateBookList();
+        // 不再自动生成页面，等待用户在版式库选择版式
+        // 清除现有页面
+        if (m_editorView && m_editorView->editorScene()) {
+            m_editorView->editorScene()->clearPage();
+            m_editorView->editorScene()->updatePageBackground();
+        }
+        m_editedPages.clear();
+        if (m_layoutEngine) {
+            m_layoutEngine.clear();
+        }
         m_layoutCombo->setCurrentIndex(0);
-        recalculateLayout();
 
-        statusBar()->showMessage(tr("成功加载 %1 本书").arg(m_allBooks.size()), 3000);
+        statusBar()->showMessage(tr("成功加载 %1 本书，请在版式库选择版式生成页面").arg(m_allBooks.size()), 5000);
     });
 
     QFuture<LoadResult> future = QtConcurrent::run([this, filePath]() -> LoadResult {
@@ -1756,9 +2025,29 @@ void MainWindow::onBookItemChanged(int index, bool checked)
 {
     Q_UNUSED(index);
     Q_UNUSED(checked);
-    if (!m_allBooks.isEmpty()) {
+    // 仅在已有布局引擎时重新计算（即用户已选择过版式）
+    if (!m_allBooks.isEmpty() && m_layoutEngine) {
         recalculateLayout();
     }
+}
+
+void MainWindow::onLayoutSelected(LayoutMode mode)
+{
+    // 保存当前页面的编辑数据
+    if (m_currentPage >= 0 && m_currentPage < m_editedPages.size()) {
+        saveCurrentPageData();
+    }
+
+    // 设置布局模式（阻塞信号避免触发onLayoutModeChanged导致双重recalculateLayout调用）
+    // m_layoutCombo 的 itemData: 0=Auto, 1=SingleColumn, 2=MultiColumn
+    // 与 LayoutMode 枚举值一一对应
+    {
+        QSignalBlocker blocker(m_layoutCombo);
+        m_layoutCombo->setCurrentIndex(static_cast<int>(mode));
+    }
+
+    // 重新计算布局
+    recalculateLayout();
 }
 
 void MainWindow::onPreviewPageChanged(int page)
@@ -1816,6 +2105,25 @@ void MainWindow::onSelectionChanged(QList<PageElementPtr> elements)
         statusBar()->showMessage(tr("已选中 %1 个元素").arg(elements.size()));
     } else {
         statusBar()->showMessage(tr("就绪"), 2000);
+    }
+
+    refreshLayerPanel();
+
+    // 正向同步：场景选中→图层高亮
+    if (m_layerPanel) {
+        if (elements.size() == 1) {
+            // 使用constData()避免QSharedDataPointer对抽象类PageElementData的detach/clone
+            m_layerPanel->highlightElement(elements.first().constData()->id());
+        } else if (elements.size() > 1) {
+            QStringList ids;
+            for (const PageElementPtr& elem : elements) {
+                ids.append(elem.constData()->id());
+            }
+            m_layerPanel->highlightElements(ids);
+        } else {
+            // 无选中时清除高亮
+            m_layerPanel->highlightElement(QString());
+        }
     }
 }
 

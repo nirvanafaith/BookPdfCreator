@@ -12,6 +12,7 @@
 #include "BaseEditorItem.h"
 #include "SelectionHandle.h"
 #include "SnapGuide.h"
+#include "ToolsPanel.h"  // for ToolType enum
 #include "layout/LayoutEngine.h"
 
 class QUndoStack;
@@ -22,6 +23,7 @@ class QTextCursor;
 class QGraphicsTextItem;
 class GuideLineItem;
 class QGraphicsRectItem;
+class QGraphicsPathItem;
 
 // ============================================================
 // EditorScene - 编辑场景
@@ -82,6 +84,9 @@ public:
     // 更新页面背景Item（白纸+边距虚线），在loadPage和changePaperSize后调用
     void updatePageBackground();
 
+    // 清除当前页所有Item（供MainWindow在重置数据时调用）
+    void clearPage();
+
     // 获取页面背景Item（白纸），供图层面板控制可见性
     QGraphicsRectItem* pageBackgroundItem() const { return m_pageBackgroundItem; }
 
@@ -90,6 +95,11 @@ public:
 
     // 更新选中装饰器位置和尺寸（供MainWindow在原地更新元素后调用）
     void updateSelectionDecorator();
+
+public slots:
+    // ---- 工具模式 ----
+    void setCurrentTool(int tool);
+    void setForegroundColor(const QColor& color);
 
 signals:
     // 选中元素变化（携带元素数据列表）
@@ -106,6 +116,13 @@ signals:
 
     // 元素被双击
     void elementDoubleClicked(BaseEditorItem* item);
+
+    // 吸管拾取颜色后通知外部更新前景色（ToolsPanel等）
+    void foregroundColorPicked(const QColor& color);
+
+    // 文本工具创建文本元素并请求进入编辑模式后，
+    // 通知MainWindow切换回选择工具
+    void textCreatedAndEditRequested();
 
 protected:
     // 绘制页面背景（A4白底+边距虚线）
@@ -124,8 +141,6 @@ protected:
     void keyPressEvent(QKeyEvent* event) override;
 
 private:
-    // 清除当前页所有Item
-    void clearPage();
     // 从PageData创建QGraphicsItem
     void createItemsFromPageData(const PageDataPtr& pageData);
     // 创建单个元素对应的Item（根据elementType分派到Text/Image/Shape）
@@ -148,6 +163,23 @@ private:
     // keepAspectRatio=true时以对角/对边为锚点等比缩放（四角默认等比，四边Shift时等比）
     static QRectF computeResizedRect(const QRectF& initial, const QPointF& delta,
                                      HandlePosition handle, bool keepAspectRatio = false);
+
+    // ---- 工具模式处理 ----
+    void handleShapeToolPress(QGraphicsSceneMouseEvent* event);
+    void handleShapeToolMove(QGraphicsSceneMouseEvent* event);
+    void handleShapeToolRelease(QGraphicsSceneMouseEvent* event);
+    void handleBrushToolPress(QGraphicsSceneMouseEvent* event);
+    void handleBrushToolMove(QGraphicsSceneMouseEvent* event);
+    void handleBrushToolRelease(QGraphicsSceneMouseEvent* event);
+    void handlePaintBucketPress(QGraphicsSceneMouseEvent* event);
+    void handleEyedropperPress(QGraphicsSceneMouseEvent* event);
+    void handleTextToolPress(QGraphicsSceneMouseEvent* event);
+    ShapeElementData::ShapeType currentShapeType() const;  // 根据m_currentTool返回ShapeType
+    // 生成递增的元素名称（扫描当前页面已存在的同名前缀元素，返回prefix+maxNum+1）
+    QString generateElementName(const QString& prefix) const;
+    void addShapeElement(const QRectF& rect);
+    void addPathElement(const QPainterPath& path);
+    QString addTextElement(const QPointF& pos);
 
     LayoutEnginePtr m_engine;
     PageDataPtr m_currentPageData;
@@ -182,6 +214,13 @@ private:
 
     // 剪贴板：存储复制/剪切的元素数据
     QList<PageElementPtr> m_clipboard;
+
+    // ---- 工具模式 ----
+    int m_currentTool;              // 当前工具（ToolType枚举值）
+    QColor m_foregroundColor;       // 当前前景色
+    QPointF m_toolStartPos;         // 工具操作起始点
+    QGraphicsPathItem* m_previewItem;  // 形状预览Item
+    QPainterPath m_brushPath;       // 画笔路径
 };
 
 #endif // EDITORSCENE_H
